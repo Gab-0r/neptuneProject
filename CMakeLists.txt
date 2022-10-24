@@ -9,8 +9,12 @@ set(CMAKE_CXX_STANDARD 17)
 # (note this can come from environment, CMake cache etc)
 set(PICO_SDK_PATH "C:/Users/j_gab/Documents/Pico/pico-sdk")
 
+set(FREERTOS_KERNEL_PATH "C:/Users/j_gab/Documents/Pico/FreeRTOS-Kernel")
+
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
+
+include(FreeRTOS_Kernel_import.cmake)
 
 project(neptuneProject C CXX ASM)
 
@@ -18,17 +22,29 @@ project(neptuneProject C CXX ASM)
 pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
+if(TARGET tinyusb_device)
+    add_executable(neptuneProject neptuneProject.c )
+    target_include_directories(neptuneProject PUBLIC ./)
 
-add_executable(neptuneProject neptuneProject.c )
+    pico_set_program_name(neptuneProject "neptuneProject")
+    pico_set_program_version(neptuneProject "0.1")
 
-pico_set_program_name(neptuneProject "neptuneProject")
-pico_set_program_version(neptuneProject "0.1")
+    pico_enable_stdio_uart(neptuneProject 0)
+    pico_enable_stdio_usb(neptuneProject 1)
 
-pico_enable_stdio_uart(neptuneProject 0)
-pico_enable_stdio_usb(neptuneProject 1)
+    # Add the standard library to the build
+    target_link_libraries(neptuneProject
+        pico_stdlib
+        FreeRTOS-Kernel
+        FreeRTOS-Kernel-Heap4
+        hardware_spi
+        hardware_adc
+        hardware_timer
+    )
 
-# Add the standard library to the build
-target_link_libraries(neptuneProject pico_stdlib)
+    pico_add_extra_outputs(neptuneProject)
 
-pico_add_extra_outputs(neptuneProject)
+    elseif(PICO_ON_DEVICE)
+        message(WARNING "not building hello_usb because TinyUSB submodule is not initialized in the SDK")
+    endif()
 
