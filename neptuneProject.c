@@ -16,10 +16,14 @@
 #define BIT_1 (1UL << 1UL)
 #define BIT_2 (1UL << 2UL)
 #define BIT_3 (1UL << 3UL)
+#define BIT_4 (1UL << 4UL)
+
+#define CONTROLTRIGGER (1UL << 3UL)|(1 << 2UL)|(1 << 1UL)|(1 << 0UL)
 
 //Event group de medida
 EventGroupHandle_t xMeasureEventGroup;
 EventGroupHandle_t xProcEventGroup;
+EventGroupHandle_t xControlEventGroup;
 
 //Tareas
 void readIMUTask(void *pvParameters);
@@ -30,6 +34,9 @@ void readWiFi(void *pvParameters);
 void procesIMUTask(void *pvParameters);
 void procesWindDirTask(void *pvParameters);
 void procesWiFiTask(void *pvParameters);
+
+void controlActionTask(void *pvParameters);
+void sendPayloadTask(void *pvParameters);
 
 void settingTask(void *pvParameters);
 
@@ -44,6 +51,7 @@ int main()
     printf("Creando grupos de eventos...\r\n");
     xMeasureEventGroup = xEventGroupCreate();
     xProcEventGroup = xEventGroupCreate();
+    xControlEventGroup = xEventGroupCreate();
 
     //Creación de tareas
     printf("Creando tareas...\r\n");
@@ -60,6 +68,12 @@ int main()
     xTaskCreate(procesWindDirTask, "WindProces", 1000, NULL, 2, NULL);
     xTaskCreate(procesWiFiTask, "WiFiProces", 1000, NULL, 2, NULL);
     
+    //Tarea de control
+    xTaskCreate(controlActionTask, "ControlAction", 1000, NULL, 3, NULL);
+
+    //Tarea de comunicacion
+    xTaskCreate(sendPayloadTask, "Send", 1000, NULL, 2, NULL);
+
     //Iniciar el scheduler
     printf("Iniciando scheduler...\r\n");
     vTaskStartScheduler();
@@ -131,6 +145,7 @@ void readWindSpeedTask(void *pvParameters){
         /*
             FUNCIONES DE LECTURA DE LA VELOCIDAD DEL VIENTO
         */
+       xEventGroupSetBits(xControlEventGroup, BIT_2);
     }
 }
 
@@ -164,6 +179,8 @@ void procesIMUTask(void *pvParameters){
         /*
             FUNCIONES PARA EL PROCESMAIENTO DE LA IMU
         */
+
+       xEventGroupSetBits(xControlEventGroup, BIT_0);
     }
 }
 
@@ -181,6 +198,8 @@ void procesWindDirTask(void *pvParameters){
         /*
             FUNCIONES PARA EL PROCESMAIENTO DE LA DIRECCION DEL VIENTO
         */
+
+       xEventGroupSetBits(xControlEventGroup, BIT_1);
     }
 }
 
@@ -188,12 +207,49 @@ void procesWiFiTask(void *pvParameters){
     //Valor del grupo de eventos
     EventBits_t xEventGroupValue;
 
-    //Bits del grupod e eventos por lo que se va a esperar
+    //Bits del grupo de eventos por lo que se va a esperar
     const EventBits_t xBitsToWaitfor = BIT_2;
 
     while(true){
         xEventGroupValue = xEventGroupWaitBits(xProcEventGroup, xBitsToWaitfor, pdTRUE, pdTRUE, portMAX_DELAY);
         printf("Iniciando procesamiento del WiFi...\r\n");
+
+        /*
+            FUNCIONES PARA EL PROCESMAIENTO DE LA DIRECCION DEL VIENTO
+        */
+
+       xEventGroupSetBits(xControlEventGroup, BIT_3);
+    }
+}
+
+void controlActionTask(void *pvParameters){
+    //Valor del grupo de eventos
+    EventBits_t xEventGroupValue;
+
+    //Bits del grupo de eventos por lo que se va a esperar
+    const EventBits_t xBitsToWaitfor = (BIT_0 | BIT_1 | BIT_2 | BIT_3);
+
+    while(true){
+        xEventGroupValue = xEventGroupWaitBits(xControlEventGroup, xBitsToWaitfor, pdTRUE, pdTRUE, portMAX_DELAY);
+        printf("---- < INICIANDO CONTROL > ----\r\n");
+
+        /*
+            FUNCIONES PARA EL PROCESMAIENTO DE LA DIRECCION DEL VIENTO
+        */
+        xEventGroupSetBits(xControlEventGroup, BIT_4);
+    }
+}
+
+void sendPayloadTask(void *pvParameters){
+    //Valor del grupo de eventos
+    EventBits_t xEventGroupValue;
+
+    //Bits del grupo de eventos por lo que se va a esperar
+    const EventBits_t xBitsToWaitfor = BIT_4;
+
+    while(true){
+        xEventGroupValue = xEventGroupWaitBits(xControlEventGroup, xBitsToWaitfor, pdTRUE, pdTRUE, portMAX_DELAY);
+        printf("---- < ENVIANDO PAYLOAD > ----\r\n");
 
         /*
             FUNCIONES PARA EL PROCESMAIENTO DE LA DIRECCION DEL VIENTO
