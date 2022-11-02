@@ -41,6 +41,10 @@ void settingTask(void *pvParameters);
 //Inicialización del hardware
 void hardwareInit(void);
 
+//Creación de tareas
+void createTasks(void);
+
+
 int main()
 {
     hardwareInit();
@@ -54,26 +58,7 @@ int main()
     xProcEventGroup = xEventGroupCreate();
     xControlEventGroup = xEventGroupCreate();
 
-    //Creación de tareas
-    printf("Creando tareas...\r\n");
-    //Tarea trigger (Cada segundo)
-    xTaskCreate(settingTask, "BitSetter", 1000, NULL, 1, NULL);
-    //Tareas de medición
-    xTaskCreate(readIMUTask, "IMUReader", 1000, NULL, 2, NULL);
-    xTaskCreate(readWindDirTask, "WindDirReader", 1000, NULL, 2, NULL);
-    xTaskCreate(readWindSpeedTask, "WindSpeedReader", 1000, NULL, 2, NULL);
-    xTaskCreate(readWiFi, "WiFiReader", 1000, NULL, 2, NULL);
-
-    //Tareas de procesamiento
-    xTaskCreate(procesIMUTask, "IMUProces", 1000, NULL, 2, NULL);
-    xTaskCreate(procesWindDirTask, "WindProces", 1000, NULL, 2, NULL);
-    xTaskCreate(procesWiFiTask, "WiFiProces", 1000, NULL, 2, NULL);
-    
-    //Tarea de control
-    xTaskCreate(controlActionTask, "ControlAction", 1000, NULL, 3, NULL);
-
-    //Tarea de comunicacion
-    xTaskCreate(sendPayloadTask, "Send", 1000, NULL, 2, NULL);
+    createTasks();
 
     //Iniciar el scheduler
     printf("Iniciando scheduler...\r\n");
@@ -265,3 +250,27 @@ void hardwareInit(void){
     gpio_set_dir(ONBOARD_LED, GPIO_OUT);
     gpio_put(ONBOARD_LED, 1);
 }
+
+void createTasks(void){
+    printf("Creando tareas...\r\n");
+    //Tarea trigger (Cada segundo)
+    xTaskCreate(settingTask, "BitSetter", 1000, NULL, 1, NULL);
+    //Tareas de medición
+    xTaskCreate(readIMUTask, "IMUReader", 1000, NULL, 2, NULL);
+    xTaskCreate(readWindDirTask, "WindDirReader", 1000, NULL, 2, NULL);
+    xTaskCreate(readWindSpeedTask, "WindSpeedReader", 1000, NULL, 2, NULL);
+    xTaskCreate(readWiFi, "WiFiReader", 1000, NULL, 2, NULL);
+
+    //Tareas de procesamiento
+    xTaskCreate(procesIMUTask, "IMUProces", 1000, NULL, 2, NULL);
+    xTaskCreate(procesWindDirTask, "WindProces", 1000, NULL, 2, NULL);
+    xTaskCreate(procesWiFiTask, "WiFiProces", 1000, NULL, 2, NULL);
+    
+    //Tarea de control
+    xTaskCreate(controlActionTask, "ControlAction", 1000, NULL, 3, NULL);
+
+    //Tarea de comunicacion
+    xTaskCreate(sendPayloadTask, "Send", 1000, NULL, 2, NULL);
+}
+
+
