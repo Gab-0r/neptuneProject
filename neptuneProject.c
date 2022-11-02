@@ -11,14 +11,12 @@
 //Timers del FreeRTOS
 #include "timers.h"
 
-//Grupo de eventos
+//Bits para eventos
 #define BIT_0 (1UL << 0UL)
 #define BIT_1 (1UL << 1UL)
 #define BIT_2 (1UL << 2UL)
 #define BIT_3 (1UL << 3UL)
 #define BIT_4 (1UL << 4UL)
-
-#define CONTROLTRIGGER (1UL << 3UL)|(1 << 2UL)|(1 << 1UL)|(1 << 0UL)
 
 //Event group de medida
 EventGroupHandle_t xMeasureEventGroup;
@@ -40,9 +38,12 @@ void sendPayloadTask(void *pvParameters);
 
 void settingTask(void *pvParameters);
 
+//Inicialización del hardware
+void hardwareInit(void);
+
 int main()
 {
-    stdio_init_all();
+    hardwareInit();
 
     sleep_ms(5000);
     printf("Iniciando...\r\n");
@@ -255,4 +256,12 @@ void sendPayloadTask(void *pvParameters){
             FUNCIONES PARA EL PROCESMAIENTO DE LA DIRECCION DEL VIENTO
         */
     }
+}
+
+void hardwareInit(void){
+    stdio_init_all();
+    const uint ONBOARD_LED = PICO_DEFAULT_LED_PIN;
+    gpio_init(ONBOARD_LED);
+    gpio_set_dir(ONBOARD_LED, GPIO_OUT);
+    gpio_put(ONBOARD_LED, 1);
 }
