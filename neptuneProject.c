@@ -8,9 +8,13 @@
 #include "hardware/adc.h"
 #include "hardware/timer.h"
 #include "queue.h"
+#include "mpu9250.h"
 
 //Timers del FreeRTOS
 #include "timers.h"
+
+
+#define PI 3.14159265
 
 //Bits para eventos
 #define BIT_0 (1UL << 0UL)
@@ -24,8 +28,8 @@ EventGroupHandle_t xMeasureEventGroup;
 EventGroupHandle_t xProcEventGroup;
 EventGroupHandle_t xControlEventGroup;
 
-//Colas
-QueueHandle_t xAcelQueue;
+//Colas IMU
+QueueHandle_t xAcelQueue[3];
 
 //Tareas
 void readIMUTask(void *pvParameters);
@@ -49,6 +53,16 @@ void hardwareInit(void);
 void createTasks(void);
 
 
+//Variables de la IMU
+int16_t acceleration[3], gyro[3], gyroCal[3], eulerAngles[2], fullAngles[2], magnet[3];
+absolute_time_t timeOfLastCheck;
+
+//Funciones de la IMU
+void init_mpu9250(int loop);
+void updateAngles();
+void printDataImu();
+
+
 int main()
 {
     hardwareInit();
@@ -62,8 +76,12 @@ int main()
     xProcEventGroup = xEventGroupCreate();
     xControlEventGroup = xEventGroupCreate();
 
-    //Creación de colas
-    xAcelQueue = xQueueCreate(10, sizeof(int16_t));
+    //Creación de colas Acelerometro
+    //xAcelQueue = xQueueCreate(10, sizeof(int16_t));
+    for (int i = 0; i < 3; i++)
+    {
+        xAcelQueue[i] = xQueueCreate(10, sizeof(int16_t));
+    }
 
     createTasks();
 
@@ -98,8 +116,12 @@ void readIMUTask(void *pvParameters){
     //Bits del grupo de eventos por los que se va a esperar
     const EventBits_t xBitsToWaitFor = BIT_0;
 
+    //Variables para la Queue
     uint16_t ValueToSend;
-    BaseType_t xStatus;
+    BaseType_t xStatus[3];
+
+    //Variables para la IMU
+    int16_t xAcelData[3], xGyroData[3], xMagnetData[3];
 
     while(true){
         xEventGroupValue = xEventGroupWaitBits(xMeasureEventGroup, xBitsToWaitFor, pdTRUE, pdTRUE, portMAX_DELAY);
@@ -110,12 +132,22 @@ void readIMUTask(void *pvParameters){
         */
        
         //Se llena la cola con datos
+        /*
         ValueToSend = 20;
         for (uint16_t i = 0; i < 10; i++){
             ValueToSend += 1;
             xStatus = xQueueSendToBack(xAcelQueue, &ValueToSend, 0);
             printf("Enviando: %u\r\n", ValueToSend);
         }
+        */
+        for (int i = 0; i < 50; i++){
+            updateAngles(xAcelData);
+            printf("Valores leidos acelerometro: %d,%d,%d\r\n", xAcelData[0], xAcelData[1], xAcelData[2]);
+            sleep_ms(100);
+        }
+       
+       updateAngles(xAcelData);
+
        
        xEventGroupSetBits(xProcEventGroup, BIT_0);
     }
@@ -188,13 +220,15 @@ void procesIMUTask(void *pvParameters){
         /*
             FUNCIONES PARA EL PROCESMAIENTO DE LA IMU
         */
-        
+        /*
         for (int i = 0; i < 10; i++)
         {
             xStatus = xQueueReceive(xAcelQueue, &buffer, 0);
             printf("Valor recibido: %u\r\n", buffer);
         }
         printf("FIN DE LA COLA\r\n");
+        */
+
         xEventGroupSetBits(xControlEventGroup, BIT_0);
     }
 }
@@ -274,10 +308,15 @@ void sendPayloadTask(void *pvParameters){
 
 void hardwareInit(void){
     stdio_init_all();
+
+    //Uso del default LED
     const uint ONBOARD_LED = PICO_DEFAULT_LED_PIN;
     gpio_init(ONBOARD_LED);
     gpio_set_dir(ONBOARD_LED, GPIO_OUT);
     gpio_put(ONBOARD_LED, 1);
+
+    //Init IMU
+    init_mpu9250(100);
 }
 
 void createTasks(void){
@@ -302,4 +341,15 @@ void createTasks(void){
     xTaskCreate(sendPayloadTask, "Send", 1000, NULL, 2, NULL);
 }
 
+void init_mpu9250(int loop){
+    start_spi();
+    calibrate_gyro(gyroCal, loop);
+    mpu9250_read_raw_accel(acceleration);
+    calculate_angles_from_accel(eulerAngles, acceleration);
+    timeOfLastCheck = get_absolute_time();
+}
 
+void updateAngles(int16_t acelTemp[3]){
+    mpu9250_read_raw_accel(acelTemp);
+    timeOfLastCheck = get_absolute_time();
+}

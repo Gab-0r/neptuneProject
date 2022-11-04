@@ -23,7 +23,7 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 if(TARGET tinyusb_device)
-    add_executable(neptuneProject neptuneProject.c )
+    add_executable(neptuneProject neptuneProject.c mpu9250.c)
     target_include_directories(neptuneProject PUBLIC ./)
 
     pico_set_program_name(neptuneProject "neptuneProject")
