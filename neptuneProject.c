@@ -7,6 +7,7 @@
 #include "hardware/spi.h"
 #include "hardware/adc.h"
 #include "hardware/timer.h"
+#include "queue.h"
 
 //Timers del FreeRTOS
 #include "timers.h"
@@ -22,6 +23,9 @@
 EventGroupHandle_t xMeasureEventGroup;
 EventGroupHandle_t xProcEventGroup;
 EventGroupHandle_t xControlEventGroup;
+
+//Colas
+QueueHandle_t xAcelQueue;
 
 //Tareas
 void readIMUTask(void *pvParameters);
@@ -58,6 +62,9 @@ int main()
     xProcEventGroup = xEventGroupCreate();
     xControlEventGroup = xEventGroupCreate();
 
+    //Creación de colas
+    xAcelQueue = xQueueCreate(10, sizeof(int16_t));
+
     createTasks();
 
     //Iniciar el scheduler
@@ -90,6 +97,10 @@ void readIMUTask(void *pvParameters){
 
     //Bits del grupo de eventos por los que se va a esperar
     const EventBits_t xBitsToWaitFor = BIT_0;
+
+    uint16_t ValueToSend;
+    BaseType_t xStatus;
+
     while(true){
         xEventGroupValue = xEventGroupWaitBits(xMeasureEventGroup, xBitsToWaitFor, pdTRUE, pdTRUE, portMAX_DELAY);
         printf("Iniciando lectura de IMU...\r\n");
@@ -97,9 +108,16 @@ void readIMUTask(void *pvParameters){
         /*
             FUNCIONES DE LECTURA DE LA IMU
         */
-
+       
+        //Se llena la cola con datos
+        ValueToSend = 20;
+        for (uint16_t i = 0; i < 10; i++){
+            ValueToSend += 1;
+            xStatus = xQueueSendToBack(xAcelQueue, &ValueToSend, 0);
+            printf("Enviando: %u\r\n", ValueToSend);
+        }
+       
        xEventGroupSetBits(xProcEventGroup, BIT_0);
-
     }
 }
 
@@ -158,6 +176,11 @@ void procesIMUTask(void *pvParameters){
     //Bits del grupod e eventos por lo que se va a esperar
     const EventBits_t xBitsToWaitfor = BIT_0;
 
+    uint16_t buffer = 0;
+    uint16_t AcelReceived[10];
+
+    BaseType_t xStatus;
+
     while(true){
         xEventGroupValue = xEventGroupWaitBits(xProcEventGroup, xBitsToWaitfor, pdTRUE, pdTRUE, portMAX_DELAY);
         printf("Iniciando procesamiento de la IMU...\r\n");
@@ -165,8 +188,14 @@ void procesIMUTask(void *pvParameters){
         /*
             FUNCIONES PARA EL PROCESMAIENTO DE LA IMU
         */
-
-       xEventGroupSetBits(xControlEventGroup, BIT_0);
+        
+        for (int i = 0; i < 10; i++)
+        {
+            xStatus = xQueueReceive(xAcelQueue, &buffer, 0);
+            printf("Valor recibido: %u\r\n", buffer);
+        }
+        printf("FIN DE LA COLA\r\n");
+        xEventGroupSetBits(xControlEventGroup, BIT_0);
     }
 }
 
