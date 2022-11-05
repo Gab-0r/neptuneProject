@@ -127,25 +127,12 @@ void readIMUTask(void *pvParameters){
         xEventGroupValue = xEventGroupWaitBits(xMeasureEventGroup, xBitsToWaitFor, pdTRUE, pdTRUE, portMAX_DELAY);
         printf("Iniciando lectura de IMU...\r\n");
 
-        /*
-            FUNCIONES DE LECTURA DE LA IMU
-        */
-       
-        //Se llena la cola con datos
-        /*
-        ValueToSend = 20;
-        for (uint16_t i = 0; i < 10; i++){
-            ValueToSend += 1;
-            xStatus = xQueueSendToBack(xAcelQueue, &ValueToSend, 0);
-            printf("Enviando: %u\r\n", ValueToSend);
-        }
-        */
         for (int i = 0; i < 10; i++){
             updateAngles(xAcelData);
 
-            xQueueSendToBack(xAcelQueue[0], &xAcelData[0], 0);
-            xQueueSendToBack(xAcelQueue[1], &xAcelData[1], 0);
-            xQueueSendToBack(xAcelQueue[2], &xAcelData[2], 0);
+            for (int n = 0; n < 3; n++){
+                xQueueSendToBack(xAcelQueue[n], &xAcelData[n], 0);
+            }
 
             printf("Enviado: %d,%d,%d\r\n", xAcelData[0], xAcelData[1], xAcelData[2]);
             sleep_ms(100);
@@ -210,30 +197,18 @@ void procesIMUTask(void *pvParameters){
     const EventBits_t xBitsToWaitfor = BIT_0;
 
     int16_t buffer[3];
-    uint16_t AcelReceived[10];
 
     BaseType_t xStatus;
 
     while(true){
         xEventGroupValue = xEventGroupWaitBits(xProcEventGroup, xBitsToWaitfor, pdTRUE, pdTRUE, portMAX_DELAY);
         printf("Iniciando procesamiento de la IMU...\r\n");
-
-        /*
-            FUNCIONES PARA EL PROCESMAIENTO DE LA IMU
-        */
-        /*
-        for (int i = 0; i < 10; i++)
-        {
-            xStatus = xQueueReceive(xAcelQueue, &buffer, 0);
-            printf("Valor recibido: %u\r\n", buffer);
-        }
-        printf("FIN DE LA COLA\r\n");
-        */
        
         for (int i = 0; i < 10; i++){
-            xQueueReceive(xAcelQueue[0], &buffer[0], 0);
-            xQueueReceive(xAcelQueue[1], &buffer[1], 0);
-            xQueueReceive(xAcelQueue[2], &buffer[2], 0);
+            
+            for(int n = 0; n < 3; n++){
+                xQueueReceive(xAcelQueue[n], &buffer[n], 0);
+            }
 
             printf("Recibido: %d,%d,%d\r\n", buffer[0], buffer[1], buffer[2]);
         }
