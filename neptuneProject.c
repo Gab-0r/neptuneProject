@@ -140,15 +140,16 @@ void readIMUTask(void *pvParameters){
             printf("Enviando: %u\r\n", ValueToSend);
         }
         */
-        for (int i = 0; i < 50; i++){
+        for (int i = 0; i < 10; i++){
             updateAngles(xAcelData);
-            printf("Valores leidos acelerometro: %d,%d,%d\r\n", xAcelData[0], xAcelData[1], xAcelData[2]);
+
+            xQueueSendToBack(xAcelQueue[0], &xAcelData[0], 0);
+            xQueueSendToBack(xAcelQueue[1], &xAcelData[1], 0);
+            xQueueSendToBack(xAcelQueue[2], &xAcelData[2], 0);
+
+            printf("Enviado: %d,%d,%d\r\n", xAcelData[0], xAcelData[1], xAcelData[2]);
             sleep_ms(100);
         }
-       
-       updateAngles(xAcelData);
-
-       
        xEventGroupSetBits(xProcEventGroup, BIT_0);
     }
 }
@@ -208,7 +209,7 @@ void procesIMUTask(void *pvParameters){
     //Bits del grupod e eventos por lo que se va a esperar
     const EventBits_t xBitsToWaitfor = BIT_0;
 
-    uint16_t buffer = 0;
+    int16_t buffer[3];
     uint16_t AcelReceived[10];
 
     BaseType_t xStatus;
@@ -228,6 +229,14 @@ void procesIMUTask(void *pvParameters){
         }
         printf("FIN DE LA COLA\r\n");
         */
+       
+        for (int i = 0; i < 10; i++){
+            xQueueReceive(xAcelQueue[0], &buffer[0], 0);
+            xQueueReceive(xAcelQueue[1], &buffer[1], 0);
+            xQueueReceive(xAcelQueue[2], &buffer[2], 0);
+
+            printf("Recibido: %d,%d,%d\r\n", buffer[0], buffer[1], buffer[2]);
+        }
 
         xEventGroupSetBits(xControlEventGroup, BIT_0);
     }
