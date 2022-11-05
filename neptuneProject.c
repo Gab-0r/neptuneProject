@@ -31,8 +31,11 @@ EventGroupHandle_t xMeasureEventGroup;
 EventGroupHandle_t xProcEventGroup;
 EventGroupHandle_t xControlEventGroup;
 
-//Colas IMU
+//Cola acelerometro
 QueueHandle_t xAcelQueue[3];
+
+//Cola giroscopio
+QueueHandle_t xGyroQueue[3];
 
 //Tareas
 void readIMUTask(void *pvParameters);
@@ -79,11 +82,11 @@ int main()
     xProcEventGroup = xEventGroupCreate();
     xControlEventGroup = xEventGroupCreate();
 
-    //Creación de colas Acelerometro
-    //xAcelQueue = xQueueCreate(10, sizeof(int16_t));
+    //Creación de colas de la IMU
     for (int i = 0; i < 3; i++)
     {
-        xAcelQueue[i] = xQueueCreate(10, sizeof(int16_t));
+        xAcelQueue[i] = xQueueCreate(DATA_NUM_AVG, sizeof(int16_t));
+        xGyroQueue[i] = xQueueCreate(DATA_NUM_AVG, sizeof(int16_t));
     }
 
     createTasks();
@@ -119,10 +122,6 @@ void readIMUTask(void *pvParameters){
     //Bits del grupo de eventos por los que se va a esperar
     const EventBits_t xBitsToWaitFor = BIT_0;
 
-    //Variables para la Queue
-    uint16_t ValueToSend;
-    BaseType_t xStatus[3];
-
     //Variables para la IMU
     int16_t xAcelData[3], xGyroData[3], xMagnetData[3];
 
@@ -131,13 +130,16 @@ void readIMUTask(void *pvParameters){
         printf("Iniciando lectura de IMU...\r\n");
 
         for (int i = 0; i < DATA_NUM_AVG; i++){
-            updateAngles(xAcelData);
+            updateAngles(xAcelData, xGyroData);
 
             for (int n = 0; n < 3; n++){
                 xQueueSendToBack(xAcelQueue[n], &xAcelData[n], 0);
+                xQueueSendToBack(xGyroQueue[n], &xGyroData[n], 0);
             }
 
-            printf("Enviado: %d,%d,%d\r\n", xAcelData[0], xAcelData[1], xAcelData[2]);
+            //printf("Enviado: %d,%d,%d\r\n", xAcelData[0], xAcelData[1], xAcelData[2]);
+            printf("Enviado: %d,%d,%d\r\n", xGyroData[0], xGyroData[1], xGyroData[2]);
+            //printf("Enviado: %d,%d,%d\r\n", xAcelData[0], xAcelData[1], xAcelData[2]);
             sleep_ms(100);
         }
        xEventGroupSetBits(xProcEventGroup, BIT_0);
@@ -200,10 +202,10 @@ void procesIMUTask(void *pvParameters){
     const EventBits_t xBitsToWaitfor = BIT_0;
 
     //Acumuladores
-    int accAcel[3];
+    int accAcel[3], accGyro[3];
 
     //Variables del acelerometro y recepcion de datos
-    int16_t buffer[3], AcelAvg[3];
+    int16_t buffer[3], AcelAvg[3], GyroAvg[3];
 
     BaseType_t xStatus;
 
@@ -217,23 +219,33 @@ void procesIMUTask(void *pvParameters){
             AcelAvg[i] = 0;
             buffer[i] = 0;
             accAcel[i] = 0;
+            accGyro[i] = 0;
+            GyroAvg[i] = 0;
         }
         
         //Extrayendo y acumulando datos del acelerometro
         for (int i = 0; i < DATA_NUM_AVG; i++){
-            //Se extraen los datos de cada eje y se acumulan
+
+            //Se extraen los datos de cada eje del acelerometro y se acumulan
             for(int n = 0; n < 3; n++){
                 xQueueReceive(xAcelQueue[n], &buffer[n], 0);
                 accAcel[n] += buffer[n];
             }
-            //printf("Recibido: %d,%d,%d\r\n", buffer[0], buffer[1], buffer[2]);
+
+            //Se extraeb kis datis de cada eje del giroscopio y se acumulan
+            for(int n = 0; n < 3; n++){
+                xQueueReceive(xGyroQueue[n], &buffer[n], 0);
+                accGyro[n] += buffer[n];
+            }
+            printf("Recibido: %d,%d,%d\r\n", buffer[0], buffer[1], buffer[2]);
         }
 
-        //Promedio acelerometro
+        //Se dividen los valores acumulados para hallar el promedio
         for (int i = 0; i < 3; i++){
             AcelAvg[i] = accAcel[i]/DATA_NUM_AVG;
+            GyroAvg[i] = accGyro[i]/DATA_NUM_AVG;
         }
-        printf("Promedio acelerometro: %d,%d,%d\r\n", AcelAvg[0], AcelAvg[1], AcelAvg[2]);
+        printf("Promedio acelerometro: %d,%d,%d\r\n", GyroAvg[0], GyroAvg[1], GyroAvg[2]);
         xEventGroupSetBits(xControlEventGroup, BIT_0);
     }
 }
@@ -354,7 +366,9 @@ void init_mpu9250(int loop){
     timeOfLastCheck = get_absolute_time();
 }
 
-void updateAngles(int16_t acelTemp[3]){
+void updateAngles(int16_t acelTemp[3], int16_t gyroTemp[3]){
     mpu9250_read_raw_accel(acelTemp);
+    mpu9250_read_raw_gyro(gyroTemp);
     timeOfLastCheck = get_absolute_time();
 }
+
