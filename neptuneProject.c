@@ -13,15 +13,18 @@
 //Timers del FreeRTOS
 #include "timers.h"
 
-
+//PI
 #define PI 3.14159265
 
+//Número de datos leidos a promediar
+#define DATA_NUM_AVG    10
+
 //Bits para eventos
-#define BIT_0 (1UL << 0UL)
-#define BIT_1 (1UL << 1UL)
-#define BIT_2 (1UL << 2UL)
-#define BIT_3 (1UL << 3UL)
-#define BIT_4 (1UL << 4UL)
+#define BIT_0   (1UL << 0UL)
+#define BIT_1   (1UL << 1UL)
+#define BIT_2   (1UL << 2UL)
+#define BIT_3   (1UL << 3UL)
+#define BIT_4   (1UL << 4UL)
 
 //Event group de medida
 EventGroupHandle_t xMeasureEventGroup;
@@ -127,7 +130,7 @@ void readIMUTask(void *pvParameters){
         xEventGroupValue = xEventGroupWaitBits(xMeasureEventGroup, xBitsToWaitFor, pdTRUE, pdTRUE, portMAX_DELAY);
         printf("Iniciando lectura de IMU...\r\n");
 
-        for (int i = 0; i < 10; i++){
+        for (int i = 0; i < DATA_NUM_AVG; i++){
             updateAngles(xAcelData);
 
             for (int n = 0; n < 3; n++){
@@ -196,23 +199,41 @@ void procesIMUTask(void *pvParameters){
     //Bits del grupod e eventos por lo que se va a esperar
     const EventBits_t xBitsToWaitfor = BIT_0;
 
-    int16_t buffer[3];
+    //Acumuladores
+    int accAcel[3];
+
+    //Variables del acelerometro y recepcion de datos
+    int16_t buffer[3], AcelAvg[3];
 
     BaseType_t xStatus;
 
     while(true){
         xEventGroupValue = xEventGroupWaitBits(xProcEventGroup, xBitsToWaitfor, pdTRUE, pdTRUE, portMAX_DELAY);
         printf("Iniciando procesamiento de la IMU...\r\n");
-       
-        for (int i = 0; i < 10; i++){
-            
+
+        //Inicializacion variables que almacenan los datos promediados
+        for (int i = 0; i < 3; i++)
+        {
+            AcelAvg[i] = 0;
+            buffer[i] = 0;
+            accAcel[i] = 0;
+        }
+        
+        //Extrayendo y acumulando datos del acelerometro
+        for (int i = 0; i < DATA_NUM_AVG; i++){
+            //Se extraen los datos de cada eje y se acumulan
             for(int n = 0; n < 3; n++){
                 xQueueReceive(xAcelQueue[n], &buffer[n], 0);
+                accAcel[n] += buffer[n];
             }
-
-            printf("Recibido: %d,%d,%d\r\n", buffer[0], buffer[1], buffer[2]);
+            //printf("Recibido: %d,%d,%d\r\n", buffer[0], buffer[1], buffer[2]);
         }
 
+        //Promedio acelerometro
+        for (int i = 0; i < 3; i++){
+            AcelAvg[i] = accAcel[i]/DATA_NUM_AVG;
+        }
+        printf("Promedio acelerometro: %d,%d,%d\r\n", AcelAvg[0], AcelAvg[1], AcelAvg[2]);
         xEventGroupSetBits(xControlEventGroup, BIT_0);
     }
 }
