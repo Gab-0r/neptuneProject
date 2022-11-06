@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD 17)
 
 # Initialise pico_sdk from installed location
 # (note this can come from environment, CMake cache etc)
+
 set(PICO_SDK_PATH "C:/Users/j_gab/Documents/Pico/pico-sdk")
 
 set(FREERTOS_KERNEL_PATH "C:/Users/j_gab/Documents/Pico/FreeRTOS-Kernel")
@@ -23,7 +24,7 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 if(TARGET tinyusb_device)
-    add_executable(neptuneProject neptuneProject.c )
+    add_executable(neptuneProject neptuneProject.c mpu9250.c)
     target_include_directories(neptuneProject PUBLIC ./)
 
     pico_set_program_name(neptuneProject "neptuneProject")

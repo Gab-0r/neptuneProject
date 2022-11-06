@@ -7,23 +7,38 @@
 #include "hardware/spi.h"
 #include "hardware/adc.h"
 #include "hardware/timer.h"
+#include "queue.h"
+#include "mpu9250.h"
 
 //Timers del FreeRTOS
 #include "timers.h"
 
-//Grupo de eventos
-#define BIT_0 (1UL << 0UL)
-#define BIT_1 (1UL << 1UL)
-#define BIT_2 (1UL << 2UL)
-#define BIT_3 (1UL << 3UL)
-#define BIT_4 (1UL << 4UL)
+//PI
+#define PI 3.14159265
 
-#define CONTROLTRIGGER (1UL << 3UL)|(1 << 2UL)|(1 << 1UL)|(1 << 0UL)
+//Número de datos leidos a promediar
+#define DATA_NUM_AVG    10
+
+//Bits para eventos
+#define BIT_0   (1UL << 0UL)
+#define BIT_1   (1UL << 1UL)
+#define BIT_2   (1UL << 2UL)
+#define BIT_3   (1UL << 3UL)
+#define BIT_4   (1UL << 4UL)
 
 //Event group de medida
 EventGroupHandle_t xMeasureEventGroup;
 EventGroupHandle_t xProcEventGroup;
 EventGroupHandle_t xControlEventGroup;
+
+//Cola acelerometro
+QueueHandle_t xAcelQueue[3];
+
+//Cola giroscopio
+QueueHandle_t xGyroQueue[3];
+
+//Cola magnetometro
+QueueHandle_t xMagnetoQueue[3];
 
 //Tareas
 void readIMUTask(void *pvParameters);
@@ -40,9 +55,26 @@ void sendPayloadTask(void *pvParameters);
 
 void settingTask(void *pvParameters);
 
+//Inicialización del hardware
+void hardwareInit(void);
+
+//Creación de tareas
+void createTasks(void);
+
+
+//Variables de la IMU
+int16_t acceleration[3], gyro[3], gyroCal[3], eulerAngles[2], fullAngles[2], magnet[3];
+absolute_time_t timeOfLastCheck;
+
+//Funciones de la IMU
+void init_mpu9250(int loop);
+void updateAngles();
+void printDataImu();
+
+
 int main()
 {
-    stdio_init_all();
+    hardwareInit();
 
     sleep_ms(5000);
     printf("Iniciando...\r\n");
@@ -53,26 +85,15 @@ int main()
     xProcEventGroup = xEventGroupCreate();
     xControlEventGroup = xEventGroupCreate();
 
-    //Creación de tareas
-    printf("Creando tareas...\r\n");
-    //Tarea trigger (Cada segundo)
-    xTaskCreate(settingTask, "BitSetter", 1000, NULL, 1, NULL);
-    //Tareas de medición
-    xTaskCreate(readIMUTask, "IMUReader", 1000, NULL, 2, NULL);
-    xTaskCreate(readWindDirTask, "WindDirReader", 1000, NULL, 2, NULL);
-    xTaskCreate(readWindSpeedTask, "WindSpeedReader", 1000, NULL, 2, NULL);
-    xTaskCreate(readWiFi, "WiFiReader", 1000, NULL, 2, NULL);
+    //Creación de colas de la IMU
+    for (int i = 0; i < 3; i++)
+    {
+        xAcelQueue[i] = xQueueCreate(DATA_NUM_AVG, sizeof(int16_t));
+        xGyroQueue[i] = xQueueCreate(DATA_NUM_AVG, sizeof(int16_t));
+        xMagnetoQueue[i] = xQueueCreate(DATA_NUM_AVG, sizeof(int16_t));
+    }
 
-    //Tareas de procesamiento
-    xTaskCreate(procesIMUTask, "IMUProces", 1000, NULL, 2, NULL);
-    xTaskCreate(procesWindDirTask, "WindProces", 1000, NULL, 2, NULL);
-    xTaskCreate(procesWiFiTask, "WiFiProces", 1000, NULL, 2, NULL);
-    
-    //Tarea de control
-    xTaskCreate(controlActionTask, "ControlAction", 1000, NULL, 3, NULL);
-
-    //Tarea de comunicacion
-    xTaskCreate(sendPayloadTask, "Send", 1000, NULL, 2, NULL);
+    createTasks();
 
     //Iniciar el scheduler
     printf("Iniciando scheduler...\r\n");
@@ -104,16 +125,29 @@ void readIMUTask(void *pvParameters){
 
     //Bits del grupo de eventos por los que se va a esperar
     const EventBits_t xBitsToWaitFor = BIT_0;
+
+    //Variables para la IMU
+    int16_t xAcelData[3], xGyroData[3], xMagnetoData[3];
+
     while(true){
         xEventGroupValue = xEventGroupWaitBits(xMeasureEventGroup, xBitsToWaitFor, pdTRUE, pdTRUE, portMAX_DELAY);
         printf("Iniciando lectura de IMU...\r\n");
 
-        /*
-            FUNCIONES DE LECTURA DE LA IMU
-        */
+        for (int i = 0; i < DATA_NUM_AVG; i++){
+            updateAngles(xAcelData, xGyroData, xMagnetoData);
 
+            for (int n = 0; n < 3; n++){
+                xQueueSendToBack(xAcelQueue[n], &xAcelData[n], 0);
+                xQueueSendToBack(xGyroQueue[n], &xGyroData[n], 0);
+                xQueueSendToBack(xMagnetoQueue[n], &xMagnetoData[n], 0);
+            }
+
+            //printf("Enviado: %d,%d,%d\r\n", xAcelData[0], xAcelData[1], xAcelData[2]);
+            //printf("Enviado: %d,%d,%d\r\n", xGyroData[0], xGyroData[1], xGyroData[2]);
+            //printf("Enviado: %d,%d,%d\r\n", xMagnetoData[0], xMagnetoData[1], xMagnetoData[2]);
+            //sleep_ms(100);
+        }
        xEventGroupSetBits(xProcEventGroup, BIT_0);
-
     }
 }
 
@@ -172,15 +206,65 @@ void procesIMUTask(void *pvParameters){
     //Bits del grupod e eventos por lo que se va a esperar
     const EventBits_t xBitsToWaitfor = BIT_0;
 
+    //Acumuladores
+    int accAcel[3], accGyro[3], accMagneto[3];
+
+    //Variables del acelerometro y recepcion de datos
+    int16_t buffer[3], AcelAvg[3], GyroAvg[3], MagnetoAvg[3];
+
+    BaseType_t xStatus;
+
     while(true){
         xEventGroupValue = xEventGroupWaitBits(xProcEventGroup, xBitsToWaitfor, pdTRUE, pdTRUE, portMAX_DELAY);
         printf("Iniciando procesamiento de la IMU...\r\n");
 
-        /*
-            FUNCIONES PARA EL PROCESMAIENTO DE LA IMU
-        */
+        //Inicializacion variables que almacenan los datos promediados
+        for (int i = 0; i < 3; i++)
+        {
+            AcelAvg[i] = 0;
+            buffer[i] = 0;
+            accAcel[i] = 0;
+            accGyro[i] = 0;
+            GyroAvg[i] = 0;
+            accMagneto[i] = 0;
+            MagnetoAvg[i] = 0;
+        }
+        
+        //Extrayendo y acumulando datos del acelerometro
+        for (int i = 0; i < DATA_NUM_AVG; i++){
 
-       xEventGroupSetBits(xControlEventGroup, BIT_0);
+            //Se extraen los datos de cada eje del acelerometro y se acumulan
+            for(int n = 0; n < 3; n++){
+                xQueueReceive(xAcelQueue[n], &buffer[n], 0);
+                accAcel[n] += buffer[n];
+            }
+
+            //Se extraen los datos de cada eje del giroscopio y se acumulan
+            for(int n = 0; n < 3; n++){
+                xQueueReceive(xGyroQueue[n], &buffer[n], 0);
+                accGyro[n] += buffer[n];
+            }
+
+
+            //Se extraeb kis datis de cada eje del giroscopio y se acumulan
+            for(int n = 0; n < 3; n++){
+                xQueueReceive(xMagnetoQueue[n], &buffer[n], 0);
+                accMagneto[n] += buffer[n];
+            }
+
+            //printf("Recibido: %d,%d,%d\r\n", buffer[0], buffer[1], buffer[2]);
+        }
+
+        //Se dividen los valores acumulados para hallar el promedio
+        for (int i = 0; i < 3; i++){
+            AcelAvg[i] = accAcel[i]/DATA_NUM_AVG;
+            GyroAvg[i] = accGyro[i]/DATA_NUM_AVG;
+            MagnetoAvg[i] = accMagneto[i]/DATA_NUM_AVG;
+        }
+        //printf("Promedio acelerometro: %d,%d,%d\r\n", AcelAvg[0], AcelAvg[1], AcelAvg[2]);
+        //printf("Promedio giroscopio: %d,%d,%d\r\n", GyroAvg[0], GyroAvg[1], GyroAvg[2]);
+        //printf("Promedio magnetometro: %d,%d,%d\r\n", MagnetoAvg[0], MagnetoAvg[1], MagnetoAvg[2]);
+        xEventGroupSetBits(xControlEventGroup, BIT_0);
     }
 }
 
@@ -256,3 +340,54 @@ void sendPayloadTask(void *pvParameters){
         */
     }
 }
+
+void hardwareInit(void){
+    stdio_init_all();
+
+    //Uso del default LED
+    const uint ONBOARD_LED = PICO_DEFAULT_LED_PIN;
+    gpio_init(ONBOARD_LED);
+    gpio_set_dir(ONBOARD_LED, GPIO_OUT);
+    gpio_put(ONBOARD_LED, 1);
+
+    //Init IMU
+    init_mpu9250(100);
+}
+
+void createTasks(void){
+    printf("Creando tareas...\r\n");
+    //Tarea trigger (Cada segundo)
+    xTaskCreate(settingTask, "BitSetter", 1000, NULL, 1, NULL);
+    //Tareas de medición
+    xTaskCreate(readIMUTask, "IMUReader", 1000, NULL, 2, NULL);
+    xTaskCreate(readWindDirTask, "WindDirReader", 1000, NULL, 2, NULL);
+    xTaskCreate(readWindSpeedTask, "WindSpeedReader", 1000, NULL, 2, NULL);
+    xTaskCreate(readWiFi, "WiFiReader", 1000, NULL, 2, NULL);
+
+    //Tareas de procesamiento
+    xTaskCreate(procesIMUTask, "IMUProces", 1000, NULL, 2, NULL);
+    xTaskCreate(procesWindDirTask, "WindProces", 1000, NULL, 2, NULL);
+    xTaskCreate(procesWiFiTask, "WiFiProces", 1000, NULL, 2, NULL);
+    
+    //Tarea de control
+    xTaskCreate(controlActionTask, "ControlAction", 1000, NULL, 3, NULL);
+
+    //Tarea de comunicacion
+    xTaskCreate(sendPayloadTask, "Send", 1000, NULL, 2, NULL);
+}
+
+void init_mpu9250(int loop){
+    start_spi();
+    calibrate_gyro(gyroCal, loop);
+    mpu9250_read_raw_accel(acceleration);
+    calculate_angles_from_accel(eulerAngles, acceleration);
+    timeOfLastCheck = get_absolute_time();
+}
+
+void updateAngles(int16_t acelTemp[3], int16_t gyroTemp[3], int16_t magnetoTemp[3]){
+    mpu9250_read_raw_accel(acelTemp);
+    mpu9250_read_raw_gyro(gyroTemp);
+    mpu9250_read_raw_magneto(magnetoTemp);
+    timeOfLastCheck = get_absolute_time();
+}
+
