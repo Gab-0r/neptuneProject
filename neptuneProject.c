@@ -261,7 +261,9 @@ void procesIMUTask(void *pvParameters){
             GyroAvg[i] = accGyro[i]/DATA_NUM_AVG;
             MagnetoAvg[i] = accMagneto[i]/DATA_NUM_AVG;
         }
-        //printf("Promedio acelerometro: %d,%d,%d\r\n", MagnetoAvg[0], MagnetoAvg[1], MagnetoAvg[2]);
+        //printf("Promedio acelerometro: %d,%d,%d\r\n", AcelAvg[0], AcelAvg[1], AcelAvg[2]);
+        //printf("Promedio giroscopio: %d,%d,%d\r\n", GyroAvg[0], GyroAvg[1], GyroAvg[2]);
+        //printf("Promedio magnetometro: %d,%d,%d\r\n", MagnetoAvg[0], MagnetoAvg[1], MagnetoAvg[2]);
         xEventGroupSetBits(xControlEventGroup, BIT_0);
     }
 }
