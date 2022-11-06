@@ -40,6 +40,9 @@ QueueHandle_t xGyroQueue[3];
 //Cola magnetometro
 QueueHandle_t xMagnetoQueue[3];
 
+//cola velocidad del viento
+QueueHandle_t xWindDirQueue;
+
 //Tareas
 void readIMUTask(void *pvParameters);
 void readWindDirTask(void *pvParameters);
@@ -98,6 +101,9 @@ int main()
         xGyroQueue[i] = xQueueCreate(DATA_NUM_AVG, sizeof(int16_t));
         xMagnetoQueue[i] = xQueueCreate(DATA_NUM_AVG, sizeof(int16_t));
     }
+
+    //Creación de colas
+    xWindDirQueue = xQueueCreate(DATA_NUM_AVG, sizeof(uint16_t));
 
     createTasks();
 
@@ -158,6 +164,10 @@ void readIMUTask(void *pvParameters){
 }
 
 void readWindDirTask(void *pvParameters){
+    
+    uint16_t windDirAnalog;
+    //float windDirGrades;
+
     EventBits_t xEventGroupValue;
 
     const EventBits_t xBitsToWaitFor = BIT_1;
@@ -165,18 +175,20 @@ void readWindDirTask(void *pvParameters){
     while(true){
         xEventGroupValue = xEventGroupWaitBits(xMeasureEventGroup, xBitsToWaitFor, pdTRUE, pdTRUE, portMAX_DELAY);
         printf("Iniciando lectura de direccion del viento...\r\n");
-        /*
-            FUNCIONES DE LECTURA DE LA DIRECCION DEL VIENTO
-        */
+
+        //Leyendo y enviando por cola
+        for(int i = 0; i < DATA_NUM_AVG; i++){
+            windDirAnalog = adc_read();
+            xQueueSendToBack(xWindDirQueue, &windDirAnalog, 0);
+            //printf("Enviando: %d\r\n", windDirAnalog);
+        }
+        //windDirGrades = (windDirAnalog * conversion_factor) * (359.0/3.3);
 
        xEventGroupSetBits(xProcEventGroup, BIT_1);
     }
 }
 
 void readWindSpeedTask(void *pvParameters){
-    
-    uint16_t windDirAnalog;
-    float windDirGrades;
 
     EventBits_t xEventGroupValue;
 
@@ -185,10 +197,7 @@ void readWindSpeedTask(void *pvParameters){
     while(true){
         xEventGroupValue = xEventGroupWaitBits(xMeasureEventGroup, xBitsToWaitFor, pdTRUE, pdTRUE, portMAX_DELAY);
         printf("Iniciando lectura de velocidad del viento...\r\n");
-
-        windDirAnalog = adc_read();
-        windDirGrades = (windDirAnalog * conversion_factor) * (359.0/3.3);
-        printf("Direccion: %f\r\n", windDirGrades);
+        
        xEventGroupSetBits(xControlEventGroup, BIT_2);
     }
 }
@@ -282,6 +291,11 @@ void procesWindDirTask(void *pvParameters){
     //Valor del grupo de eventos
     EventBits_t xEventGroupValue;
 
+    //Variables
+    float dirAvg = 0; 
+    uint16_t accDir = 0;
+    uint16_t buffer;
+
     //Bits del grupod e eventos por lo que se va a esperar
     const EventBits_t xBitsToWaitfor = BIT_1;
 
@@ -289,11 +303,20 @@ void procesWindDirTask(void *pvParameters){
         xEventGroupValue = xEventGroupWaitBits(xProcEventGroup, xBitsToWaitfor, pdTRUE, pdTRUE, portMAX_DELAY);
         printf("Iniciando procesamiento de la dirección del viento...\r\n");
 
-        /*
-            FUNCIONES PARA EL PROCESMAIENTO DE LA DIRECCION DEL VIENTO
-        */
+        //Variables
+        dirAvg = 0; 
+        accDir = 0;
+        buffer =0;
 
-       xEventGroupSetBits(xControlEventGroup, BIT_1);
+        for(int i = 0; i < DATA_NUM_AVG; i++){
+            xQueueReceive(xWindDirQueue, &buffer, 0);
+            accDir += buffer;
+            //printf("Recibido: %d\r\n", buffer);
+        }
+
+        dirAvg = ((accDir/DATA_NUM_AVG)*conversion_factor) * (359.0/3.3);
+        //printf("Dirección promedio: %f\r\n", dirAvg);
+        xEventGroupSetBits(xControlEventGroup, BIT_1);
     }
 }
 
