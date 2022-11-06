@@ -66,6 +66,12 @@ void createTasks(void);
 int16_t acceleration[3], gyro[3], gyroCal[3], eulerAngles[2], fullAngles[2], magnet[3];
 absolute_time_t timeOfLastCheck;
 
+//Variables para la dirección del viento
+const uint16_t windDirPin = 28;
+
+//Factor de converion del adc
+const float conversion_factor = 3.3f / (1 << 12);
+
 //Funciones de la IMU
 void init_mpu9250(int loop);
 void updateAngles();
@@ -168,6 +174,10 @@ void readWindDirTask(void *pvParameters){
 }
 
 void readWindSpeedTask(void *pvParameters){
+    
+    uint16_t windDirAnalog;
+    float windDirGrades;
+
     EventBits_t xEventGroupValue;
 
     const EventBits_t xBitsToWaitFor = BIT_2;
@@ -176,9 +186,9 @@ void readWindSpeedTask(void *pvParameters){
         xEventGroupValue = xEventGroupWaitBits(xMeasureEventGroup, xBitsToWaitFor, pdTRUE, pdTRUE, portMAX_DELAY);
         printf("Iniciando lectura de velocidad del viento...\r\n");
 
-        /*
-            FUNCIONES DE LECTURA DE LA VELOCIDAD DEL VIENTO
-        */
+        windDirAnalog = adc_read();
+        windDirGrades = (windDirAnalog * conversion_factor) * (359.0/3.3);
+        printf("Direccion: %f\r\n", windDirGrades);
        xEventGroupSetBits(xControlEventGroup, BIT_2);
     }
 }
@@ -349,6 +359,11 @@ void hardwareInit(void){
     gpio_init(ONBOARD_LED);
     gpio_set_dir(ONBOARD_LED, GPIO_OUT);
     gpio_put(ONBOARD_LED, 1);
+
+    //Init Wind
+    adc_init();
+    adc_gpio_init(windDirPin);
+    adc_select_input(2);
 
     //Init IMU
     init_mpu9250(100);
