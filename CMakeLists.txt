@@ -25,6 +25,9 @@ pico_sdk_init()
 # Add executable. Default name is the project name, version 0.1
 if(TARGET tinyusb_device)
     add_executable(neptuneProject neptuneProject.c mpu9250.c)
+
+    add_subdirectory(lib/pico-nrf24/lib/nrf24l01)
+
     target_include_directories(neptuneProject PUBLIC ./)
 
     pico_set_program_name(neptuneProject "neptuneProject")
@@ -41,6 +44,7 @@ if(TARGET tinyusb_device)
         hardware_spi
         hardware_adc
         hardware_timer
+        nrf24_driver
     )
 
     pico_add_extra_outputs(neptuneProject)

@@ -9,6 +9,7 @@
 #include "hardware/timer.h"
 #include "queue.h"
 #include "mpu9250.h"
+#include "nrf24_driver.h"
 
 //Timers del FreeRTOS
 #include "timers.h"
@@ -48,6 +49,18 @@ QueueHandle_t xWindDirQueue;
 
 //Cola velocidad del viento
 QueueHandle_t xWindSpeedQueue;
+
+//Colas con datos procesados y de control para enviar
+QueueHandle_t xAcelAvgPayload[3];
+QueueHandle_t xGyroAvgPayload[3];
+QueueHandle_t xMagnetoAvgPayload[3];
+QueueSetHandle_t xWindDirAvgPayload;
+QueueSetHandle_t xWindSpeedAvgPayload;
+
+//Direcciones de los pipes RF
+const uint8_t pipezero_addr[5] = {0x37,0x37,0x37,0x37,0x37};
+const uint8_t pipeone_addr[5] = {0xC7,0xC7,0xC7,0xC7,0xC7};
+const uint8_t pipetwo_addr[5] = {0xC8,0xC7,0xC7,0xC7,0xC7};
 
 //Tareas
 void readIMUTask(void *pvParameters);
@@ -112,11 +125,18 @@ int main()
         xAcelQueue[i] = xQueueCreate(DATA_NUM_AVG, sizeof(int16_t));
         xGyroQueue[i] = xQueueCreate(DATA_NUM_AVG, sizeof(int16_t));
         xMagnetoQueue[i] = xQueueCreate(DATA_NUM_AVG, sizeof(int16_t));
+
+        xAcelAvgPayload[i] = xQueueCreate(1, sizeof(int16_t));
+        xGyroAvgPayload[i] = xQueueCreate(1, sizeof(int16_t));
+        xMagnetoAvgPayload[i] = xQueueCreate(1, sizeof(int16_t));
     }
 
     //Creación de colas
     xWindDirQueue = xQueueCreate(DATA_NUM_AVG, sizeof(uint16_t));
     xWindSpeedQueue = xQueueCreate(1, sizeof(float));
+
+    xWindDirAvgPayload = xQueueCreate(1, sizeof(uint16_t));
+    //xWindSpeedAvgPayload = xQueueCreate(1, sizeof(float));
 
     createTasks();
 
@@ -129,7 +149,7 @@ int main()
 }
 
 void settingTask(void *pvParamters){
-    const TickType_t xDelay1sec = pdMS_TO_TICKS(3000UL), xDontBlock = 0;
+    const TickType_t xDelay1sec = pdMS_TO_TICKS(1150UL), xDontBlock = 0;
     while(true){
         vTaskDelay(xDelay1sec);
         //printf("Seteando bit 0...\r\n");
@@ -275,7 +295,7 @@ void procesIMUTask(void *pvParameters){
             MagnetoAvg[i] = 0;
         }
         
-        //Extrayendo y acumulando datos del acelerometro
+        //Extrayendo y acumulando datos
         for (int i = 0; i < DATA_NUM_AVG; i++){
 
             //Se extraen los datos de cada eje del acelerometro y se acumulan
@@ -309,6 +329,16 @@ void procesIMUTask(void *pvParameters){
         //printf("Promedio acelerometro: %d,%d,%d\r\n", AcelAvg[0], AcelAvg[1], AcelAvg[2]);
         //printf("Promedio giroscopio: %d,%d,%d\r\n", GyroAvg[0], GyroAvg[1], GyroAvg[2]);
         //printf("Promedio magnetometro: %d,%d,%d\r\n", MagnetoAvg[0], MagnetoAvg[1], MagnetoAvg[2]);
+        
+        //Se envian los valores procesados en la cola
+        for (int i = 0; i < 3; i++)
+        {
+            xQueueSendToBack(xAcelAvgPayload[i], &AcelAvg[i],0);
+            xQueueSendToBack(xGyroAvgPayload[i], &GyroAvg[i],0);
+            xQueueSendToBack(xMagnetoAvgPayload[i], &MagnetoAvg[i],0);
+        }
+        
+        
         xEventGroupSetBits(xControlEventGroup, BIT_0);
     }
 }
@@ -342,6 +372,7 @@ void procesWindDirTask(void *pvParameters){
 
         dirAvg = ((accDir/DATA_NUM_AVG)*conversion_factor) * (359.0/3.3);
         //printf("Dirección promedio: %f\r\n", dirAvg);
+        xQueueSendToBack(xWindDirAvgPayload, &dirAvg, 0);
         xEventGroupSetBits(xControlEventGroup, BIT_1);
     }
 }
@@ -384,19 +415,184 @@ void controlActionTask(void *pvParameters){
 }
 
 void sendPayloadTask(void *pvParameters){
+
+    //Inicializacion RF
+    pin_manager_t pins_rf = { 
+        .copi = 3,
+        .cipo = 4, 
+        .sck = 2,
+        .csn = 5, 
+        .ce = 6 
+    };
+
+    nrf_manager_t my_config = {
+        // AW_3_BYTES, AW_4_BYTES, AW_5_BYTES
+        .address_width = AW_5_BYTES,
+        // dynamic payloads: DYNPD_ENABLE, DYNPD_DISABLE
+        .dyn_payloads = DYNPD_ENABLE,
+        // retransmission delay: ARD_250US, ARD_500US, ARD_750US, ARD_1000US
+        .retr_delay = ARD_500US,
+        // retransmission count: ARC_NONE...ARC_15RT
+        .retr_count = ARC_10RT,
+        // data rate: RF_DR_250KBPS, RF_DR_1MBPS, RF_DR_2MBPS
+        .data_rate = RF_DR_1MBPS,
+        // RF_PWR_NEG_18DBM, RF_PWR_NEG_12DBM, RF_PWR_NEG_6DBM, RF_PWR_0DBM
+        .power = RF_PWR_NEG_12DBM,
+        // RF Channel 
+        .channel = 120,
+    };
+
+    // SPI baudrate
+    uint32_t my_baudrate = 5000000;
+
+    nrf_client_t my_nrf;
+
+    // initialise my_nrf
+    nrf_driver_create_client(&my_nrf);
+
+    // configure GPIO pins and SPI
+    my_nrf.configure(&pins_rf, my_baudrate);
+
+    // not using default configuration (my_nrf.initialise(NULL)) 
+    my_nrf.initialise(&my_config);
+
+    //set to Standby-I Mode
+    my_nrf.standby_mode();
+
+    //Estructuras de payloads para los pipes
+
+    // payload sent to receiver data pipe 0
+    //Estructura de datos para enviar los datos de la IMU
+    typedef struct payload_zero_s {
+        uint8_t tagAcel;
+        int16_t acelX;
+        int16_t acelY;
+        int16_t acelZ;
+        uint8_t tagGyro;
+        int16_t gyroX;
+        int16_t gyroY;
+        int16_t gyroZ;
+        uint8_t tagMag;
+        int16_t magX;
+        int16_t magY;
+        int16_t magZ;
+    } payload_zero_t;
+
+    // payload sent to receiver data pipe 1
+    typedef struct payload_one_s {
+        int16_t windDir;
+        float windSpeed; 
+    } payload_one_t;
+
+
+    // result of packet transmission
+    fn_status_t success;
+
+    uint64_t time_sent = 0; // time packet was sent
+    uint64_t time_reply = 0; // response time after packet sent
+
     //Valor del grupo de eventos
     EventBits_t xEventGroupValue;
+
+    //Valores a enviar
+    int16_t Acel2Send[3], Gyro2Send[3], Mag2Send[3], buffer, WindDir2Send;
+    float WindSpeed2Send;
 
     //Bits del grupo de eventos por lo que se va a esperar
     const EventBits_t xBitsToWaitfor = BIT_4;
 
     while(true){
         xEventGroupValue = xEventGroupWaitBits(xControlEventGroup, xBitsToWaitfor, pdTRUE, pdTRUE, portMAX_DELAY);
+        
+        //Extrayendo valores del acelerometro
+        //printf("---- < EXTRAYENDO VALORES DEL ACELEROMETRO > ----\r\n");
+        for(int i = 0; i <3; i++){
+            xQueueReceive(xAcelAvgPayload[i], &buffer, 0);
+            Acel2Send[i] = buffer;
+        }
+
+        //Extrayendo valores del giroscopio
+        //printf("---- < EXTRAYENDO VALORES DEL GIROSCOPIO > ----\r\n");
+        for(int i = 0; i <3; i++){
+            xQueueReceive(xGyroAvgPayload[i], &buffer, 0);
+            Gyro2Send[i] = buffer;
+        }
+
+        //Extrayendo valores del magnetometro
+        //printf("---- < EXTRAYENDO VALORES DEL MAGNETOMETRO > ----\r\n");
+        for(int i = 0; i <3; i++){
+            xQueueReceive(xMagnetoAvgPayload[i], &buffer, 0);
+            Mag2Send[i] = buffer;
+        }
+
+        
+        //Extrayendo valores del sensor de viento
+        //printf("---- < EXTRAYENDO VALORES DEL VIENTO > ----\r\n");
+        xQueueReceive(xWindDirAvgPayload, &WindDir2Send,0);
+        xQueueReceive(xWindSpeedQueue, &WindSpeed2Send,0);
+
+        //Creando payload zero
+        //printf("---- < CREANDO PAYLOAD 0 > ----\r\n");
+        payload_zero_t payload_zero = {
+            .acelX = Acel2Send[0],
+            .acelY = Acel2Send[1],
+            .acelZ = Acel2Send[2],
+            .gyroX = Gyro2Send[0] - gyroCal[0],
+            .gyroY = Gyro2Send[1] - gyroCal[1],
+            .gyroZ = Gyro2Send[2] - gyroCal[2],
+            .magX = Mag2Send[0],
+            .magY = Mag2Send[1],
+            .magZ = Mag2Send[2]
+        };
+
+        //Creando payload uno
+        //printf("---- < CREANDO PAYLOAD 1 > ----\r\n");
+        payload_one_t payload_one = {
+            .windDir = WindDir2Send,
+            .windSpeed = WindSpeed2Send 
+        };
+
         printf("---- < ENVIANDO PAYLOAD > ----\r\n");
 
-        /*
-            FUNCIONES PARA EL PROCESMAIENTO DE LA DIRECCION DEL VIENTO
-        */
+        //Enviando datos al pipe 0
+        //send to receiver's DATA_PIPE_0 address
+        my_nrf.tx_destination(pipezero_addr);
+
+        // time packet was sent
+        time_sent = to_us_since_boot(get_absolute_time()); // time sent
+
+        // send packet to receiver's DATA_PIPE_0 address
+        success = my_nrf.send_packet(&payload_zero, sizeof(payload_zero));
+
+        // time auto-acknowledge was received
+        time_reply = to_us_since_boot(get_absolute_time()); // response time
+
+        if (success){
+            printf("\nPacket sent:- Response: %lluμS | Payload: %d,%d,%d,%d,%d,%d,%d,%d,%d\n",time_reply - time_sent, 
+            payload_zero.acelX, payload_zero.acelY, payload_zero.acelZ, payload_zero.gyroX, payload_zero.gyroY, payload_zero.gyroZ,
+            payload_zero.magX, payload_zero.magY, payload_zero.magZ);
+        } else {
+            printf("\nPacket not sent:- Receiver not available.\n");
+        }
+
+        // send to receiver's DATA_PIPE_1 address
+        my_nrf.tx_destination(pipeone_addr);
+
+        // time packet was sent
+        time_sent = to_us_since_boot(get_absolute_time()); // time sent
+
+        // send packet to receiver's DATA_PIPE_1 address
+        success = my_nrf.send_packet(&payload_one, sizeof(payload_one));
+        
+        // time auto-acknowledge was received
+        time_reply = to_us_since_boot(get_absolute_time()); // response time
+
+        if (success){
+            printf("\nPacket sent:- Response: %lluμS | Payload: %d,%d\n", time_reply - time_sent, payload_one.windSpeed, payload_one.windDir);
+        } else {
+            printf("\nPacket not sent:- Receiver not available.\n");
+        }
+
     }
 }
 
@@ -438,7 +634,7 @@ void createTasks(void){
     xTaskCreate(controlActionTask, "ControlAction", 1000, NULL, 3, NULL);
 
     //Tarea de comunicacion
-    xTaskCreate(sendPayloadTask, "Send", 1000, NULL, 2, NULL);
+    xTaskCreate(sendPayloadTask, "Send", 1000, NULL, 3, NULL);
 }
 
 void init_mpu9250(int loop){
