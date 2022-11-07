@@ -26,6 +26,9 @@
 #define BIT_3   (1UL << 3UL)
 #define BIT_4   (1UL << 4UL)
 
+#define ENCODER_HOLES   72
+#define ENCODER_RADIUS  0.09
+
 //Event group de medida
 EventGroupHandle_t xMeasureEventGroup;
 EventGroupHandle_t xProcEventGroup;
@@ -64,6 +67,8 @@ void hardwareInit(void);
 //Creación de tareas
 void createTasks(void);
 
+void addHole();
+
 
 //Variables de la IMU
 int16_t acceleration[3], gyro[3], gyroCal[3], eulerAngles[2], fullAngles[2], magnet[3];
@@ -71,8 +76,12 @@ absolute_time_t timeOfLastCheck;
 
 //Variables para la dirección del viento
 const uint16_t windDirPin = 28;
+const uint16_t intHole = 16;
 
-//Factor de converion del adc
+//Variables para la velocidad del viento
+uint16_t holeCount = 0;
+
+//Factor de conversion del adc
 const float conversion_factor = 3.3f / (1 << 12);
 
 //Funciones de la IMU
@@ -190,14 +199,27 @@ void readWindDirTask(void *pvParameters){
 
 void readWindSpeedTask(void *pvParameters){
 
+    //Variables
+    float radSeg, windSpeed;
+
     EventBits_t xEventGroupValue;
+
+    const TickType_t xDelay1sec = pdMS_TO_TICKS(1000UL), xDontBlock = 0;
 
     const EventBits_t xBitsToWaitFor = BIT_2;
 
     while(true){
         xEventGroupValue = xEventGroupWaitBits(xMeasureEventGroup, xBitsToWaitFor, pdTRUE, pdTRUE, portMAX_DELAY);
+        vTaskDelay(xDelay1sec);
+        radSeg = 0;
+        windSpeed = 0;
+        radSeg = ((holeCount * 60) / ENCODER_HOLES)*2*PI/60;
+        windSpeed = radSeg * ENCODER_RADIUS;
         printf("Iniciando lectura de velocidad del viento...\r\n");
-        
+        printf("Agujeros contados: %d\r\n", holeCount);
+        printf("VELOCIDAD DEL VIENTO: %f\r\n", windSpeed);
+        holeCount = 0;
+
        xEventGroupSetBits(xControlEventGroup, BIT_2);
     }
 }
@@ -387,6 +409,7 @@ void hardwareInit(void){
     adc_init();
     adc_gpio_init(windDirPin);
     adc_select_input(2);
+    gpio_set_irq_enabled_with_callback(intHole, GPIO_IRQ_EDGE_RISE, true, &addHole);
 
     //Init IMU
     init_mpu9250(100);
@@ -427,5 +450,9 @@ void updateAngles(int16_t acelTemp[3], int16_t gyroTemp[3], int16_t magnetoTemp[
     mpu9250_read_raw_gyro(gyroTemp);
     mpu9250_read_raw_magneto(magnetoTemp);
     timeOfLastCheck = get_absolute_time();
+}
+
+void addHole(){
+    holeCount += 1;
 }
 
