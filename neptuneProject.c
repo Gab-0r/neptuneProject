@@ -43,8 +43,11 @@ QueueHandle_t xGyroQueue[3];
 //Cola magnetometro
 QueueHandle_t xMagnetoQueue[3];
 
-//cola velocidad del viento
+//cola direccion del viento
 QueueHandle_t xWindDirQueue;
+
+//Cola velocidad del viento
+QueueHandle_t xWindSpeedQueue;
 
 //Tareas
 void readIMUTask(void *pvParameters);
@@ -113,6 +116,7 @@ int main()
 
     //Creación de colas
     xWindDirQueue = xQueueCreate(DATA_NUM_AVG, sizeof(uint16_t));
+    xWindSpeedQueue = xQueueCreate(1, sizeof(float));
 
     createTasks();
 
@@ -213,12 +217,12 @@ void readWindSpeedTask(void *pvParameters){
         vTaskDelay(xDelay1sec);
         radSeg = 0;
         windSpeed = 0;
+        printf("Iniciando lectura de velocidad del viento...\r\n");
         radSeg = ((holeCount * 60) / ENCODER_HOLES)*2*PI/60;
         windSpeed = radSeg * ENCODER_RADIUS;
-        printf("Iniciando lectura de velocidad del viento...\r\n");
-        printf("Agujeros contados: %d\r\n", holeCount);
-        printf("VELOCIDAD DEL VIENTO: %f\r\n", windSpeed);
         holeCount = 0;
+
+        xQueueSendToBack(xWindSpeedQueue, &windSpeed, 0);
 
        xEventGroupSetBits(xControlEventGroup, BIT_2);
     }
