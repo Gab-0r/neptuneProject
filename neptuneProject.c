@@ -26,6 +26,9 @@
 #define BIT_3   (1UL << 3UL)
 #define BIT_4   (1UL << 4UL)
 
+#define ENCODER_HOLES   72
+#define ENCODER_RADIUS  0.09
+
 //Event group de medida
 EventGroupHandle_t xMeasureEventGroup;
 EventGroupHandle_t xProcEventGroup;
@@ -39,6 +42,12 @@ QueueHandle_t xGyroQueue[3];
 
 //Cola magnetometro
 QueueHandle_t xMagnetoQueue[3];
+
+//cola direccion del viento
+QueueHandle_t xWindDirQueue;
+
+//Cola velocidad del viento
+QueueHandle_t xWindSpeedQueue;
 
 //Tareas
 void readIMUTask(void *pvParameters);
@@ -61,10 +70,22 @@ void hardwareInit(void);
 //Creación de tareas
 void createTasks(void);
 
+void addHole();
+
 
 //Variables de la IMU
 int16_t acceleration[3], gyro[3], gyroCal[3], eulerAngles[2], fullAngles[2], magnet[3];
 absolute_time_t timeOfLastCheck;
+
+//Variables para la dirección del viento
+const uint16_t windDirPin = 28;
+const uint16_t intHole = 16;
+
+//Variables para la velocidad del viento
+uint16_t holeCount = 0;
+
+//Factor de conversion del adc
+const float conversion_factor = 3.3f / (1 << 12);
 
 //Funciones de la IMU
 void init_mpu9250(int loop);
@@ -92,6 +113,10 @@ int main()
         xGyroQueue[i] = xQueueCreate(DATA_NUM_AVG, sizeof(int16_t));
         xMagnetoQueue[i] = xQueueCreate(DATA_NUM_AVG, sizeof(int16_t));
     }
+
+    //Creación de colas
+    xWindDirQueue = xQueueCreate(DATA_NUM_AVG, sizeof(uint16_t));
+    xWindSpeedQueue = xQueueCreate(1, sizeof(float));
 
     createTasks();
 
@@ -152,6 +177,10 @@ void readIMUTask(void *pvParameters){
 }
 
 void readWindDirTask(void *pvParameters){
+    
+    uint16_t windDirAnalog;
+    //float windDirGrades;
+
     EventBits_t xEventGroupValue;
 
     const EventBits_t xBitsToWaitFor = BIT_1;
@@ -159,26 +188,42 @@ void readWindDirTask(void *pvParameters){
     while(true){
         xEventGroupValue = xEventGroupWaitBits(xMeasureEventGroup, xBitsToWaitFor, pdTRUE, pdTRUE, portMAX_DELAY);
         printf("Iniciando lectura de direccion del viento...\r\n");
-        /*
-            FUNCIONES DE LECTURA DE LA DIRECCION DEL VIENTO
-        */
+
+        //Leyendo y enviando por cola
+        for(int i = 0; i < DATA_NUM_AVG; i++){
+            windDirAnalog = adc_read();
+            xQueueSendToBack(xWindDirQueue, &windDirAnalog, 0);
+            //printf("Enviando: %d\r\n", windDirAnalog);
+        }
+        //windDirGrades = (windDirAnalog * conversion_factor) * (359.0/3.3);
 
        xEventGroupSetBits(xProcEventGroup, BIT_1);
     }
 }
 
 void readWindSpeedTask(void *pvParameters){
+
+    //Variables
+    float radSeg, windSpeed;
+
     EventBits_t xEventGroupValue;
+
+    const TickType_t xDelay1sec = pdMS_TO_TICKS(1000UL), xDontBlock = 0;
 
     const EventBits_t xBitsToWaitFor = BIT_2;
 
     while(true){
         xEventGroupValue = xEventGroupWaitBits(xMeasureEventGroup, xBitsToWaitFor, pdTRUE, pdTRUE, portMAX_DELAY);
+        vTaskDelay(xDelay1sec);
+        radSeg = 0;
+        windSpeed = 0;
         printf("Iniciando lectura de velocidad del viento...\r\n");
+        radSeg = ((holeCount * 60) / ENCODER_HOLES)*2*PI/60;
+        windSpeed = radSeg * ENCODER_RADIUS;
+        holeCount = 0;
 
-        /*
-            FUNCIONES DE LECTURA DE LA VELOCIDAD DEL VIENTO
-        */
+        xQueueSendToBack(xWindSpeedQueue, &windSpeed, 0);
+
        xEventGroupSetBits(xControlEventGroup, BIT_2);
     }
 }
@@ -272,6 +317,11 @@ void procesWindDirTask(void *pvParameters){
     //Valor del grupo de eventos
     EventBits_t xEventGroupValue;
 
+    //Variables
+    float dirAvg = 0; 
+    uint16_t accDir = 0;
+    uint16_t buffer;
+
     //Bits del grupod e eventos por lo que se va a esperar
     const EventBits_t xBitsToWaitfor = BIT_1;
 
@@ -279,11 +329,20 @@ void procesWindDirTask(void *pvParameters){
         xEventGroupValue = xEventGroupWaitBits(xProcEventGroup, xBitsToWaitfor, pdTRUE, pdTRUE, portMAX_DELAY);
         printf("Iniciando procesamiento de la dirección del viento...\r\n");
 
-        /*
-            FUNCIONES PARA EL PROCESMAIENTO DE LA DIRECCION DEL VIENTO
-        */
+        //Variables
+        dirAvg = 0; 
+        accDir = 0;
+        buffer =0;
 
-       xEventGroupSetBits(xControlEventGroup, BIT_1);
+        for(int i = 0; i < DATA_NUM_AVG; i++){
+            xQueueReceive(xWindDirQueue, &buffer, 0);
+            accDir += buffer;
+            //printf("Recibido: %d\r\n", buffer);
+        }
+
+        dirAvg = ((accDir/DATA_NUM_AVG)*conversion_factor) * (359.0/3.3);
+        //printf("Dirección promedio: %f\r\n", dirAvg);
+        xEventGroupSetBits(xControlEventGroup, BIT_1);
     }
 }
 
@@ -350,6 +409,12 @@ void hardwareInit(void){
     gpio_set_dir(ONBOARD_LED, GPIO_OUT);
     gpio_put(ONBOARD_LED, 1);
 
+    //Init Wind
+    adc_init();
+    adc_gpio_init(windDirPin);
+    adc_select_input(2);
+    gpio_set_irq_enabled_with_callback(intHole, GPIO_IRQ_EDGE_RISE, true, &addHole);
+
     //Init IMU
     init_mpu9250(100);
 }
@@ -389,5 +454,9 @@ void updateAngles(int16_t acelTemp[3], int16_t gyroTemp[3], int16_t magnetoTemp[
     mpu9250_read_raw_gyro(gyroTemp);
     mpu9250_read_raw_magneto(magnetoTemp);
     timeOfLastCheck = get_absolute_time();
+}
+
+void addHole(){
+    holeCount += 1;
 }
 
