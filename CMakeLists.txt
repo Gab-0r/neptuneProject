@@ -22,6 +22,8 @@ project(neptuneProject C CXX ASM)
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
+add_subdirectory(lib/pico-nrf24/lib/nrf24l01)
+
 # Add executable. Default name is the project name, version 0.1
 if(TARGET tinyusb_device)
     add_executable(neptuneProject neptuneProject.c mpu9250.c)
@@ -41,6 +43,7 @@ if(TARGET tinyusb_device)
         hardware_spi
         hardware_adc
         hardware_timer
+        nrf24_driver
     )
 
     pico_add_extra_outputs(neptuneProject)

@@ -9,6 +9,7 @@
 #include "hardware/timer.h"
 #include "queue.h"
 #include "mpu9250.h"
+#include "nrf24_driver.h"
 
 //Timers del FreeRTOS
 #include "timers.h"
@@ -92,6 +93,37 @@ void init_mpu9250(int loop);
 void updateAngles();
 void printDataImu();
 
+
+//Variables para RF
+pin_manager_t pins_rf = { 
+        .copi = 3,
+        .cipo = 4, 
+        .sck = 2,
+        .csn = 5, 
+        .ce = 6 
+};
+
+nrf_manager_t my_config = {
+    // AW_3_BYTES, AW_4_BYTES, AW_5_BYTES
+    .address_width = AW_5_BYTES,
+    // dynamic payloads: DYNPD_ENABLE, DYNPD_DISABLE
+    .dyn_payloads = DYNPD_ENABLE,
+    // retransmission delay: ARD_250US, ARD_500US, ARD_750US, ARD_1000US
+    .retr_delay = ARD_500US,
+    // retransmission count: ARC_NONE...ARC_15RT
+    .retr_count = ARC_10RT,
+    // data rate: RF_DR_250KBPS, RF_DR_1MBPS, RF_DR_2MBPS
+    .data_rate = RF_DR_1MBPS,
+    // RF_PWR_NEG_18DBM, RF_PWR_NEG_12DBM, RF_PWR_NEG_6DBM, RF_PWR_0DBM
+    .power = RF_PWR_NEG_12DBM,
+    // RF Channel 
+    .channel = 120,
+};
+
+// SPI baudrate
+uint32_t my_baudrate = 5000000;
+
+nrf_client_t my_nrf;
 
 int main()
 {
@@ -384,19 +416,105 @@ void controlActionTask(void *pvParameters){
 }
 
 void sendPayloadTask(void *pvParameters){
+
+    //Definición estruturas de Payloads
+    // payload sent to receiver data pipe 0
+    uint8_t payload_zero = 123;
+
+    // payload sent to receiver data pipe 1
+    uint8_t payload_one[5] = "Hello";
+
+    typedef struct payload_two_s { uint8_t one; uint8_t two; } payload_two_t;
+
+    // payload sent to receiver data pipe 2
+    payload_two_t payload_two = { .one = 123, .two = 213 };
+
+    // result of packet transmission
+    fn_status_t success = 0;
+
     //Valor del grupo de eventos
     EventBits_t xEventGroupValue;
 
+    uint64_t time_sent = 0; // time packet was sent
+    uint64_t time_reply = 0; // response time after packet sent
+
     //Bits del grupo de eventos por lo que se va a esperar
-    const EventBits_t xBitsToWaitfor = BIT_4;
+    //const EventBits_t xBitsToWaitfor = BIT_4;
+
+    const TickType_t xDelay = pdMS_TO_TICKS(500UL), xDontBlock = 0;
 
     while(true){
-        xEventGroupValue = xEventGroupWaitBits(xControlEventGroup, xBitsToWaitfor, pdTRUE, pdTRUE, portMAX_DELAY);
+        //xEventGroupValue = xEventGroupWaitBits(xControlEventGroup, xBitsToWaitfor, pdTRUE, pdTRUE, portMAX_DELAY);
         printf("---- < ENVIANDO PAYLOAD > ----\r\n");
 
-        /*
-            FUNCIONES PARA EL PROCESMAIENTO DE LA DIRECCION DEL VIENTO
-        */
+        // send to receiver's DATA_PIPE_0 address
+        my_nrf.tx_destination((uint8_t[]){0x37,0x37,0x37,0x37,0x37});
+
+        // time packet was sent
+        time_sent = to_us_since_boot(get_absolute_time()); // time sent
+
+        // send packet to receiver's DATA_PIPE_0 address
+        success = my_nrf.send_packet(&payload_zero, sizeof(payload_zero));
+
+        // time auto-acknowledge was received
+        time_reply = to_us_since_boot(get_absolute_time()); // response time
+
+        if (success)
+        {
+        printf("\nPacket sent:- Response: %lluμS | Payload: %d\n", time_reply - time_sent, payload_zero);
+
+        } else {
+
+        printf("\nPacket not sent:- Receiver not available.\n");
+        }
+
+        vTaskDelay(xDelay);
+
+        // send to receiver's DATA_PIPE_1 address
+        my_nrf.tx_destination((uint8_t[]){0xC7,0xC7,0xC7,0xC7,0xC7});
+
+        // time packet was sent
+        time_sent = to_us_since_boot(get_absolute_time()); // time sent
+
+        // send packet to receiver's DATA_PIPE_1 address
+        success = my_nrf.send_packet(payload_one, sizeof(payload_one));
+        
+        // time auto-acknowledge was received
+        time_reply = to_us_since_boot(get_absolute_time()); // response time
+
+        if (success)
+        {
+        printf("\nPacket sent:- Response: %lluμS | Payload: %s\n", time_reply - time_sent, payload_one);
+
+        } else {
+
+        printf("\nPacket not sent:- Receiver not available.\n");
+        }
+
+        vTaskDelay(xDelay);
+
+        // send to receiver's DATA_PIPE_2 address
+        my_nrf.tx_destination((uint8_t[]){0xC8,0xC7,0xC7,0xC7,0xC7});
+
+        // time packet was sent
+        time_sent = to_us_since_boot(get_absolute_time()); // time sent
+
+        // send packet to receiver's DATA_PIPE_2 address
+        success = my_nrf.send_packet(&payload_two, sizeof(payload_two));
+        
+        // time auto-acknowledge was received
+        time_reply = to_us_since_boot(get_absolute_time()); // response time
+
+        if (success)
+        {
+        printf("\nPacket sent:- Response: %lluμS | Payload: %d & %d\n",time_reply - time_sent, payload_two.one, payload_two.two);
+
+        } else {
+
+        printf("\nPacket not sent:- Receiver not available.\n");
+        }
+
+        vTaskDelay(xDelay);
     }
 }
 
@@ -417,6 +535,19 @@ void hardwareInit(void){
 
     //Init IMU
     init_mpu9250(100);
+
+    //Inicialización RF
+    nrf_driver_create_client(&my_nrf);
+
+    // configure GPIO pins and SPI
+    my_nrf.configure(&pins_rf, my_baudrate);
+
+    // not using default configuration (my_nrf.initialise(NULL)) 
+    my_nrf.initialise(&my_config);
+
+
+    //set to Standby-I Mode
+    my_nrf.standby_mode();
 }
 
 void createTasks(void){
