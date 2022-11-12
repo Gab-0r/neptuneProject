@@ -43,6 +43,8 @@ if(TARGET tinyusb_device)
         hardware_spi
         hardware_adc
         hardware_timer
+        hardware_uart
+        pico_time
     )
 
     pico_add_extra_outputs(neptuneProject)

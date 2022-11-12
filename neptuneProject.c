@@ -10,6 +10,27 @@
 #include "queue.h"
 #include "mpu9250.h"
 
+//Librerias comunicación y procesamiento WIFI
+#include <string.h>
+#include <cstdlib>
+#include <math.h>
+#include "hardware/uart.h"
+#include "pico/binary_info.h"
+#include "hardware/irq.h"
+
+//Constantes para la comunicación y procesamiento WIFI
+#define UART_ID uart1
+#define BAUD_RATE 115200
+#define DATA_BITS 8
+#define STOP_BITS 1
+#define PARITY    UART_PARITY_NONE
+#define UART_TX_PIN 8 // Conectar a RX del modulo wifi
+#define UART_RX_PIN 9 // Conectar a TX
+#define F 2.4 //GHz
+#define OUTPUT_POWER 20
+#define ANTENNA_GAIN 2 //dB
+#define NSources 3 //numero de fuentes
+
 //Timers del FreeRTOS
 #include "timers.h"
 
