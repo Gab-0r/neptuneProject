@@ -94,6 +94,28 @@ void createTasks(void);
 void addHole();
 
 
+//Variables WIFI
+uint8_t ch; //caracter
+static int chars_rxed = 0;//Cantidad de caracteres recibidos
+bool timerFlag=0;//Bandera de activación de timer
+bool new_ch=0;//Bandera de nuevo caracter
+bool powerflag=0;//Bandera de evento nueva potencia registrada
+char A_WF[200]={0};//Buffer de texto para líneas recibidas
+//MAC de antenas caracterizadas
+char *Smac[]={"86:f3:eb:e0:7e:02","ee:fa:bc:1c:bd:95","86:f3:eb:e0:6c:dd"};
+float power[3]={0};//Arreglo global de potencias requeridas
+//Distancia entre antenas transmisoras
+const float D1 = 5;
+const float D2 = 5;
+float x;
+float y;
+float P1[4]={0};
+float P2[4]={0};
+float P3[4]={0};
+uint k1=0;
+uint k2=0;
+uint k3=0;
+
 //Variables de la IMU
 int16_t acceleration[3], gyro[3], gyroCal[3], eulerAngles[2], fullAngles[2], magnet[3];
 absolute_time_t timeOfLastCheck;
@@ -107,6 +129,17 @@ uint16_t holeCount = 0;
 
 //Factor de conversion del adc
 const float conversion_factor = 3.3f / (1 << 12);
+
+//Funciones WIFI
+void on_uart_rx();
+bool result_dir(struct repeating_timer *t);
+void ESPinit();
+void charmanage();
+float squared(float a);
+float distancia(float potencia,int source);
+float calcularDistanciaX(float r0, float r2);
+float calcularDistanciaY(float r0, float r1);
+void coordenadas();
 
 //Funciones de la IMU
 void init_mpu9250(int loop);
@@ -481,3 +514,146 @@ void addHole(){
     holeCount += 1;
 }
 
+//Funciones WIFI 
+// RX ISR
+void on_uart_rx() {
+   new_ch=1;
+   ch = uart_getc(UART_ID);
+}
+// timer ISR
+bool result_dir(struct repeating_timer *t)
+{
+    timerFlag=1;
+    return true;
+}
+//Init UART
+void ESPinit(){
+    // Set up our UART with a basic baud rate.
+    uart_init(UART_ID, BAUD_RATE);
+    gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
+    gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
+    int __unused actual = uart_set_baudrate(UART_ID, BAUD_RATE);
+    uart_set_hw_flow(UART_ID, false, false);
+    uart_set_format(UART_ID, DATA_BITS, STOP_BITS, PARITY);
+    uart_set_fifo_enabled(UART_ID, false);
+    int UART_IRQ = UART_ID == uart0 ? UART0_IRQ : UART1_IRQ;
+    irq_set_exclusive_handler(UART_IRQ, on_uart_rx);
+    irq_set_enabled(UART_IRQ, true);
+    uart_set_irq_enables(UART_ID, true, false);
+    uart_puts(UART_ID, "\nHello, uart interrupts\n");
+}
+
+void charmanage(){
+    //Formato de la trama de llegada
+    //AT+CWLAP
+    //+CWLAP:(<ecn>,<<ssid>,rssi>,<mac>,<canal>)\n... OK //Pueden llegar varias tramas antes de llegar OK
+    //<rssi>: String con el nivel de la señal (potencia)
+    //<mac>: Machine address code Para filtrar con mayor confianza las potencias que se requieren
+    if(ch=='\n'){ //Cada trama finaliza con un salto de linea
+        char rssi[6]={0};//String buffer para guardar informacion de potencia recibida en la cadena
+        float rssi_f;//buffer flotante para transformar la potencia identificada a un flotante
+        char mac[20]={0};//String buffer para la mac
+        A_WF[chars_rxed+1]='\0';//Se cambia el caracter de espacio por un caracter de final
+        if(A_WF[0]=='+' && A_WF[1]=='C' && A_WF[2]=='W' && A_WF[3]=='L' && A_WF[4]=='A' && A_WF[5]=='P'){
+            uint8_t sepcnt=0;//Contador de comas 
+            int j;//iterador para moverse sobre el string
+            for(int r=6;r<chars_rxed;r++){
+                if(A_WF[r]==','){
+                    sepcnt++;
+                    if(sepcnt==2){//<rssi>==,-nn.n
+                        j=0;
+                        while(A_WF[r+j+1]!=','){
+                            rssi[j]=A_WF[r+j+1];
+                            j++;
+                        }
+                        rssi[j+1]='\0';
+                        rssi_f=std::atof(rssi);//Conversion de string a float
+                        //printf("%.1f\n",rssi_f);
+                        continue;
+                    }
+                    if(sepcnt==3){//estructura de <mac>==,"00:00:00:00:00:01"
+                        j=0;
+                        while(A_WF[r+j+2]!='"'){//se inicia en 2 debido al caracter de 'comillas'
+                            mac[j]=A_WF[r+j+2];
+                            j++;
+                        }
+                        mac[j+1]='\0';//caracter de fin de cadena
+                        break;
+                    }
+                }
+            }
+            //sepcnt=0;//limpiar cuenta de comas (no es necesario si se crea localmente)
+            //printf("%s\n",A_WF);
+        }
+        for (int k=0;k<NSources;k++){
+            if(strstr(mac,Smac[k])!=NULL){
+                if(k==0){
+                    P1[k1]=rssi_f;
+                    k1++;
+                    if (k1>3)k1=0;
+                }
+                if(k==1){
+                    P2[k2]=rssi_f;
+                    k2++;
+                    if (k2>3)k2=0;
+                }
+                if(k==2){
+                    P3[k3]=rssi_f;
+                    k3++;
+                    if (k3>3)k3=0;
+                }
+            }
+        }
+        bzero(mac,20);//limpiar buffer strings
+        bzero(rssi,5);
+        bzero(A_WF,200);
+        chars_rxed=0;
+    }else{
+        A_WF[chars_rxed]=ch;//Si no es un caracter de espacio agregarlo al buffer string
+        chars_rxed++;
+    }
+}
+
+float squared(float a){
+    return (a*a);
+}
+
+float distancia(float potencia,int source){
+    float gain=0.00343f;//por defecto
+    float Epow=-0.115f;
+    if(source==0){
+        gain=0.0033f;
+        Epow=-0.115f; 
+    }else if(source==1){
+        gain=0.0031f;
+        Epow=-0.109f;
+    }else if (source==2)
+    {
+        gain=0.0039f;
+        Epow=-0.11f;
+    }
+    //printf("%.5f\n",potencia);
+    return gain*exp(potencia*Epow);  //De la regresion exponencial realizada dist=G*e^(-K*x)  
+}
+
+float calcularDistanciaX(float r0, float r2){
+    return ((squared(r0)-squared(r2)+squared(D2))/(2*D2));
+}
+
+float calcularDistanciaY(float r0, float r1){
+    return ((squared(r0)-squared(r1)+squared(D1))/(2*D1));
+}
+
+void coordenadas(){
+    power[0]=(P1[0]+P1[1]+P1[2]+P1[3])/4.0;
+    power[1]=(P2[0]+P2[1]+P2[2]+P2[3])/4.0;
+    power[2]=(P3[0]+P3[1]+P3[2]+P3[3])/4.0;
+    printf("potencias P1:%f P2:%f P3:%f \n",power[0],power[1],power[2]);
+    float r0=distancia(power[0],0);
+    float r1=distancia(power[1],1);
+    float r2=distancia(power[2],2);
+    printf("distancia: %.5f , %.5f , %.5f\n",r0,r1,r2);
+    float x=calcularDistanciaX(r0,r2);
+    float y=calcularDistanciaY(r0,r1);
+    printf("Coordenadas(X,Y): (%.2f ,%.2f)\n",x,y);
+}
