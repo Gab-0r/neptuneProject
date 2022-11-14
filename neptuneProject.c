@@ -94,7 +94,7 @@ void createTasks(void);
 void addHole();
 
 
-//Variables WIFI
+//Variables Posicionamiento
 uint8_t ch; //caracter
 static int chars_rxed = 0;//Cantidad de caracteres recibidos
 bool timerFlag=0;//Bandera de activación de timer
@@ -130,7 +130,7 @@ uint16_t holeCount = 0;
 //Factor de conversion del adc
 const float conversion_factor = 3.3f / (1 << 12);
 
-//Funciones WIFI
+//Funciones Posicionamiento
 void on_uart_rx();
 bool result_dir(struct repeating_timer *t);
 void ESPinit();
@@ -291,9 +291,13 @@ void readWiFi(void *pvParameters){
         xEventGroupValue = xEventGroupWaitBits(xMeasureEventGroup, xBitsToWaitFor, pdTRUE, pdTRUE, portMAX_DELAY);
         printf("Iniciando lectura de módulos WiFi...\r\n");
 
-        /*
-            FUNCIONES DE LECTURA DEL MODULO WIFI
-        */
+        tight_loop_contents();//Revision de interrupciones
+        if (new_ch==1){//interrupcion de recepción UART activada
+            //printf("%c",ch);
+            new_ch=0;
+            charmanage();
+        }
+
        xEventGroupSetBits(xProcEventGroup, BIT_2);
     }
 }
@@ -411,9 +415,12 @@ void procesWiFiTask(void *pvParameters){
         xEventGroupValue = xEventGroupWaitBits(xProcEventGroup, xBitsToWaitfor, pdTRUE, pdTRUE, portMAX_DELAY);
         printf("Iniciando procesamiento del WiFi...\r\n");
 
-        /*
-            FUNCIONES PARA EL PROCESMAIENTO DE LA DIRECCION DEL VIENTO
-        */
+        tight_loop_contents();//Revision de interrupciones
+        if(timerFlag==1){//Interrupcion de timer
+            timerFlag=0;
+            uart_puts(UART_ID,"AT+CWLAP\r\n");//CWLAP es un comando que escaneará el entorno buscando las redes disponibles
+            coordenadas();//Actualización de coordenadas
+        }
 
        xEventGroupSetBits(xControlEventGroup, BIT_3);
     }
@@ -469,6 +476,15 @@ void hardwareInit(void){
     adc_select_input(2);
     gpio_set_irq_enabled_with_callback(intHole, GPIO_IRQ_EDGE_RISE, true, &addHole);
 
+    //Init Posicionamiento
+    ESPinit();
+    //iniciaclización de timer
+    struct repeating_timer timer1;
+    add_repeating_timer_ms(1500,result_dir,NULL,&timer1);
+    sleep_ms(2000);
+    uart_puts(UART_ID,"AT+CWMODE=3\r\n");//Modo para ser un SoftAP y una estación al tiempo
+    sleep_ms(2000);
+
     //Init IMU
     init_mpu9250(100);
 }
@@ -514,7 +530,7 @@ void addHole(){
     holeCount += 1;
 }
 
-//Funciones WIFI 
+//Funciones Posicionamiento 
 // RX ISR
 void on_uart_rx() {
    new_ch=1;
