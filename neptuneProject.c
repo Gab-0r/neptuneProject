@@ -94,6 +94,16 @@ void updateAngles();
 void printDataImu();
 
 
+//Colas con datos procesados y de control para enviar
+QueueHandle_t xAcelAvgPayload[3];
+QueueHandle_t xGyroAvgPayload[3];
+QueueHandle_t xMagnetoAvgPayload[3];
+QueueSetHandle_t xWindDirAvgPayload;
+QueueSetHandle_t xWindSpeedAvgPayload;
+
+//Variable para controlar el envío de la telemtría
+bool sendTele = false;
+
 //Variables para RF
 pin_manager_t pins_rf = { 
         .copi = 3,
@@ -144,11 +154,17 @@ int main()
         xAcelQueue[i] = xQueueCreate(DATA_NUM_AVG, sizeof(int16_t));
         xGyroQueue[i] = xQueueCreate(DATA_NUM_AVG, sizeof(int16_t));
         xMagnetoQueue[i] = xQueueCreate(DATA_NUM_AVG, sizeof(int16_t));
+
+        xAcelAvgPayload[i] = xQueueCreate(1, sizeof(int16_t));
+        xGyroAvgPayload[i] = xQueueCreate(1, sizeof(int16_t));
+        xMagnetoAvgPayload[i] = xQueueCreate(1, sizeof(int16_t));
     }
 
     //Creación de colas
     xWindDirQueue = xQueueCreate(DATA_NUM_AVG, sizeof(uint16_t));
     xWindSpeedQueue = xQueueCreate(1, sizeof(float));
+
+    xWindDirAvgPayload = xQueueCreate(1, sizeof(uint16_t));
 
     createTasks();
 
@@ -199,9 +215,9 @@ void readIMUTask(void *pvParameters){
                 xQueueSendToBack(xMagnetoQueue[n], &xMagnetoData[n], 0);
             }
 
-            //printf("Enviado: %d,%d,%d\r\n", xAcelData[0], xAcelData[1], xAcelData[2]);
-            //printf("Enviado: %d,%d,%d\r\n", xGyroData[0], xGyroData[1], xGyroData[2]);
-            //printf("Enviado: %d,%d,%d\r\n", xMagnetoData[0], xMagnetoData[1], xMagnetoData[2]);
+            //printf("LEIDO: %d,%d,%d\r\n", xAcelData[0], xAcelData[1], xAcelData[2]);
+            //printf("LEIDO: %d,%d,%d\r\n", xGyroData[0], xGyroData[1], xGyroData[2]);
+            //printf("LEIDO: %d,%d,%d\r\n", xMagnetoData[0], xMagnetoData[1], xMagnetoData[2]);
             //sleep_ms(100);
         }
        xEventGroupSetBits(xProcEventGroup, BIT_0);
@@ -287,7 +303,7 @@ void procesIMUTask(void *pvParameters){
     int accAcel[3], accGyro[3], accMagneto[3];
 
     //Variables del acelerometro y recepcion de datos
-    int16_t buffer[3], AcelAvg[3], GyroAvg[3], MagnetoAvg[3];
+    int16_t buffer, AcelAvg[3], GyroAvg[3], MagnetoAvg[3];
 
     BaseType_t xStatus;
 
@@ -299,7 +315,7 @@ void procesIMUTask(void *pvParameters){
         for (int i = 0; i < 3; i++)
         {
             AcelAvg[i] = 0;
-            buffer[i] = 0;
+            buffer = 0;
             accAcel[i] = 0;
             accGyro[i] = 0;
             GyroAvg[i] = 0;
@@ -312,21 +328,21 @@ void procesIMUTask(void *pvParameters){
 
             //Se extraen los datos de cada eje del acelerometro y se acumulan
             for(int n = 0; n < 3; n++){
-                xQueueReceive(xAcelQueue[n], &buffer[n], 0);
-                accAcel[n] += buffer[n];
+                xQueueReceive(xAcelQueue[n], &buffer, 0);
+                accAcel[n] += buffer;
             }
 
             //Se extraen los datos de cada eje del giroscopio y se acumulan
             for(int n = 0; n < 3; n++){
-                xQueueReceive(xGyroQueue[n], &buffer[n], 0);
-                accGyro[n] += buffer[n];
+                xQueueReceive(xGyroQueue[n], &buffer, 0);
+                accGyro[n] += buffer;
             }
 
 
-            //Se extraeb kis datis de cada eje del giroscopio y se acumulan
+            //Se extraen los datos de cada eje del giroscopio y se acumulan
             for(int n = 0; n < 3; n++){
-                xQueueReceive(xMagnetoQueue[n], &buffer[n], 0);
-                accMagneto[n] += buffer[n];
+                xQueueReceive(xMagnetoQueue[n], &buffer, 0);
+                accMagneto[n] += buffer;
             }
 
             //printf("Recibido: %d,%d,%d\r\n", buffer[0], buffer[1], buffer[2]);
@@ -341,6 +357,15 @@ void procesIMUTask(void *pvParameters){
         //printf("Promedio acelerometro: %d,%d,%d\r\n", AcelAvg[0], AcelAvg[1], AcelAvg[2]);
         //printf("Promedio giroscopio: %d,%d,%d\r\n", GyroAvg[0], GyroAvg[1], GyroAvg[2]);
         //printf("Promedio magnetometro: %d,%d,%d\r\n", MagnetoAvg[0], MagnetoAvg[1], MagnetoAvg[2]);
+        
+        //Se envian los valores procesados en la cola
+        for (int i = 0; i < 3; i++)
+        {
+            xQueueSendToBack(xAcelAvgPayload[i], &AcelAvg[i],0);
+            xQueueSendToBack(xGyroAvgPayload[i], &GyroAvg[i],0);
+            xQueueSendToBack(xMagnetoAvgPayload[i], &MagnetoAvg[i],0);
+        }
+        
         xEventGroupSetBits(xControlEventGroup, BIT_0);
     }
 }
@@ -374,6 +399,7 @@ void procesWindDirTask(void *pvParameters){
 
         dirAvg = ((accDir/DATA_NUM_AVG)*conversion_factor) * (359.0/3.3);
         //printf("Dirección promedio: %f\r\n", dirAvg);
+        xQueueSendToBack(xWindDirAvgPayload, &dirAvg, 0);
         xEventGroupSetBits(xControlEventGroup, BIT_1);
     }
 }
@@ -411,6 +437,7 @@ void controlActionTask(void *pvParameters){
         /*
             FUNCIONES PARA EL PROCESMAIENTO DE LA DIRECCION DEL VIENTO
         */
+        sendTele = true;
         xEventGroupSetBits(xControlEventGroup, BIT_4);
     }
 }
@@ -423,22 +450,15 @@ void sendPayloadTask(void *pvParameters){
     //uint8_t payload2Send[5] = "Hello";
 
     typedef struct payload2Send_s{
-        uint8_t request;
-        uint8_t Acel[3];
-        uint8_t Gyro[3];
-        uint8_t Magneto[3];
-        uint8_t WindDir;
-        uint8_t WindSpeed;
+        bool request;
+        int16_t Acel[3];
+        int16_t Gyro[3];
+        int16_t Magneto[3];
+        int16_t WindDir;
+        float WindSpeed;
     } payload2Send_t;
 
-    payload2Send_t payload2Send = {
-        .request = 1,
-        .Acel = {2, 3, 4},
-        .Gyro = {5, 6, 7},
-        .Magneto = {8, 9, 10},
-        .WindDir = 11,
-        .WindSpeed = 12
-    };
+    //payload2Send_t payload2Send;
 
     //Payload to receive
     typedef struct payload2Receive_s{
@@ -469,12 +489,56 @@ void sendPayloadTask(void *pvParameters){
     // data pipe number a packet was received on
     uint8_t pipe_numberRX = 0;
 
+    //Valores a enviar
+    int16_t Acel2Send[3], Gyro2Send[3], Mag2Send[3], buffer, WindDir2Send;
+    float WindSpeed2Send;
+
     while(true){
         //xEventGroupValue = xEventGroupWaitBits(xControlEventGroup, xBitsToWaitfor, pdTRUE, pdTRUE, portMAX_DELAY);
-        printf("---- < ENVIANDO PAYLOAD > ----\r\n");
+        //printf("---- < ENVIANDO PAYLOAD > ----\r\n");
 
         timeOutCounter = 0;
 
+        //Comprobar si hay telemetría para enviar
+        if(sendTele){
+            //Extrayendo valores del acelerometro
+            //printf("---- < EXTRAYENDO VALORES DEL ACELEROMETRO > ----\r\n");
+            for(int i = 0; i <3; i++){
+                xQueueReceive(xAcelAvgPayload[i], &buffer, 0);
+                Acel2Send[i] = buffer;
+            }
+
+            //Extrayendo valores del giroscopio
+            //printf("---- < EXTRAYENDO VALORES DEL GIROSCOPIO > ----\r\n");
+            for(int i = 0; i <3; i++){
+                xQueueReceive(xGyroAvgPayload[i], &buffer, 0);
+                Gyro2Send[i] = buffer;
+            }
+
+            //Extrayendo valores del magnetometro
+            //printf("---- < EXTRAYENDO VALORES DEL MAGNETOMETRO > ----\r\n");
+            for(int i = 0; i <3; i++){
+                xQueueReceive(xMagnetoAvgPayload[i], &buffer, 0);
+                Mag2Send[i] = buffer;
+            }
+
+            
+            //Extrayendo valores del sensor de viento
+            //printf("---- < EXTRAYENDO VALORES DEL VIENTO > ----\r\n");
+            xQueueReceive(xWindDirAvgPayload, &WindDir2Send,0);
+            xQueueReceive(xWindSpeedQueue, &WindSpeed2Send,0);
+            
+        }
+        //Montando el payload
+        payload2Send_t payload2Send = {
+            .request = sendTele,
+            .Acel = {Acel2Send[0], Acel2Send[1], Acel2Send[2]},
+            .Gyro = {Gyro2Send[0], Gyro2Send[1], Gyro2Send[2]},
+            .Magneto = {Mag2Send[0], Mag2Send[1], Mag2Send[2]},
+            .WindDir = WindDir2Send,
+            .WindSpeed = WindSpeed2Send
+        };
+        sendTele = 0;
         // send to receiver's DATA_PIPE_0 address
         my_nrf.tx_destination((uint8_t[]){0x37,0x37,0x37,0x37,0x37});
 
@@ -491,8 +555,9 @@ void sendPayloadTask(void *pvParameters){
         time_reply = to_us_since_boot(get_absolute_time()); // response time
 
         if (success)
-        {
-            printf("\nPacket sent:- Response: %lluμS | Payload: %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d\n",time_reply - time_sent, payload2Send.request,
+        {   
+            //sendTele = 0;
+            printf("\nPacket sent:- Response: %lluμS | Payload: %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %f\n",time_reply - time_sent, payload2Send.request,
                 payload2Send.Acel[0], payload2Send.Acel[1], payload2Send.Acel[2], payload2Send.Gyro[0], payload2Send.Gyro[1], payload2Send.Gyro[2],
                 payload2Send.Magneto[0], payload2Send.Magneto[1], payload2Send.Magneto[2], payload2Send.WindDir, payload2Send.WindSpeed);
             
