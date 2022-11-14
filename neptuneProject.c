@@ -418,16 +418,36 @@ void controlActionTask(void *pvParameters){
 void sendPayloadTask(void *pvParameters){
 
     //Definición estruturas de Payloads
+
     // payload sent to receiver data pipe 0
-    uint8_t payload_zero = 123;
+    //uint8_t payload2Send[5] = "Hello";
 
-    // payload sent to receiver data pipe 1
-    uint8_t payload_one[5] = "Hello";
+    typedef struct payload2Send_s{
+        uint8_t request;
+        uint8_t Acel[3];
+        uint8_t Gyro[3];
+        uint8_t Magneto[3];
+        uint8_t WindDir;
+        uint8_t WindSpeed;
+    } payload2Send_t;
 
-    typedef struct payload_two_s { uint8_t one; uint8_t two; } payload_two_t;
+    payload2Send_t payload2Send = {
+        .request = 1,
+        .Acel = {2, 3, 4},
+        .Gyro = {5, 6, 7},
+        .Magneto = {8, 9, 10},
+        .WindDir = 11,
+        .WindSpeed = 12
+    };
 
-    // payload sent to receiver data pipe 2
-    payload_two_t payload_two = { .one = 123, .two = 213 };
+    //Payload to receive
+    typedef struct payload2Receive_s{
+        uint8_t velaDegree;
+        bool right;
+        bool left; 
+    } payload2Receive_t;
+
+    payload2Receive_t payload2Receive;
 
     // result of packet transmission
     fn_status_t success = 0;
@@ -442,6 +462,12 @@ void sendPayloadTask(void *pvParameters){
     //const EventBits_t xBitsToWaitfor = BIT_4;
 
     const TickType_t xDelay = pdMS_TO_TICKS(500UL), xDontBlock = 0;
+    const TickType_t xDelayTimeOut = pdMS_TO_TICKS(100UL);
+
+    uint8_t timeOutCounter = 0;
+
+    // data pipe number a packet was received on
+    uint8_t pipe_numberRX = 0;
 
     while(true){
         //xEventGroupValue = xEventGroupWaitBits(xControlEventGroup, xBitsToWaitfor, pdTRUE, pdTRUE, portMAX_DELAY);
@@ -450,70 +476,67 @@ void sendPayloadTask(void *pvParameters){
         // send to receiver's DATA_PIPE_0 address
         my_nrf.tx_destination((uint8_t[]){0x37,0x37,0x37,0x37,0x37});
 
-        // time packet was sent
-        time_sent = to_us_since_boot(get_absolute_time()); // time sent
 
-        // send packet to receiver's DATA_PIPE_0 address
-        success = my_nrf.send_packet(&payload_zero, sizeof(payload_zero));
-
-        // time auto-acknowledge was received
-        time_reply = to_us_since_boot(get_absolute_time()); // response time
-
-        if (success)
-        {
-        printf("\nPacket sent:- Response: %lluμS | Payload: %d\n", time_reply - time_sent, payload_zero);
-
-        } else {
-
-        printf("\nPacket not sent:- Receiver not available.\n");
-        }
-
-        vTaskDelay(xDelay);
-
-        // send to receiver's DATA_PIPE_1 address
-        my_nrf.tx_destination((uint8_t[]){0xC7,0xC7,0xC7,0xC7,0xC7});
-
-        // time packet was sent
-        time_sent = to_us_since_boot(get_absolute_time()); // time sent
-
-        // send packet to receiver's DATA_PIPE_1 address
-        success = my_nrf.send_packet(payload_one, sizeof(payload_one));
-        
-        // time auto-acknowledge was received
-        time_reply = to_us_since_boot(get_absolute_time()); // response time
-
-        if (success)
-        {
-        printf("\nPacket sent:- Response: %lluμS | Payload: %s\n", time_reply - time_sent, payload_one);
-
-        } else {
-
-        printf("\nPacket not sent:- Receiver not available.\n");
-        }
-
-        vTaskDelay(xDelay);
-
-        // send to receiver's DATA_PIPE_2 address
-        my_nrf.tx_destination((uint8_t[]){0xC8,0xC7,0xC7,0xC7,0xC7});
+        //Armar payload
 
         // time packet was sent
         time_sent = to_us_since_boot(get_absolute_time()); // time sent
 
         // send packet to receiver's DATA_PIPE_2 address
-        success = my_nrf.send_packet(&payload_two, sizeof(payload_two));
+        success = my_nrf.send_packet(&payload2Send, sizeof(payload2Send));
         
         // time auto-acknowledge was received
         time_reply = to_us_since_boot(get_absolute_time()); // response time
 
         if (success)
         {
-        printf("\nPacket sent:- Response: %lluμS | Payload: %d & %d\n",time_reply - time_sent, payload_two.one, payload_two.two);
+            printf("\nPacket sent:- Response: %lluμS | Payload: %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d\n",time_reply - time_sent, payload2Send.request,
+                payload2Send.Acel[0], payload2Send.Acel[1], payload2Send.Acel[2], payload2Send.Gyro[0], payload2Send.Gyro[1], payload2Send.Gyro[2],
+                payload2Send.Magneto[0], payload2Send.Magneto[1], payload2Send.Magneto[2], payload2Send.WindDir, payload2Send.WindSpeed);
+            
+            my_nrf.receiver_mode();
+            printf("Preparado para recibir control \r\n");
 
-        } else {
+            while(1){
+                if(my_nrf.is_packet(&pipe_numberRX))
+                {
+                    switch (pipe_numberRX)
+                    {
+                        case DATA_PIPE_0:
+                            // read payload
+                            my_nrf.read_packet(&payload2Receive, sizeof(payload2Receive));
 
-        printf("\nPacket not sent:- Receiver not available.\n");
+                            // receiving a two byte struct payload on DATA_PIPE_2
+                            printf("\nPacket received:- Payload (%d, %d, %d) on data pipe (%d)\n", payload2Receive.velaDegree, payload2Receive.right, 
+                                payload2Receive.left, pipe_numberRX);
+                        break;
+                        
+                        case DATA_PIPE_1:
+                        break;
+                        
+                        case DATA_PIPE_2:
+                        break;
+                        
+                        case DATA_PIPE_3:
+                        break;
+                        
+                        case DATA_PIPE_4:
+                        break;
+                        
+                        case DATA_PIPE_5:
+                        break;
+                        
+                        default:
+                        break;
+                    }
+                }
+            }
         }
-
+        /*
+        else {
+            printf("\nPacket not sent:- Receiver not available.\n");
+        }
+        */
         vTaskDelay(xDelay);
     }
 }
@@ -544,6 +567,15 @@ void hardwareInit(void){
 
     // not using default configuration (my_nrf.initialise(NULL)) 
     my_nrf.initialise(&my_config);
+
+    /**
+     * set addresses for DATA_PIPE_0 - DATA_PIPE_3.
+     * These are addresses the transmitter will send its packets to.
+     */
+    my_nrf.rx_destination(DATA_PIPE_0, (uint8_t[]){0x37,0x37,0x37,0x37,0x37});
+    my_nrf.rx_destination(DATA_PIPE_1, (uint8_t[]){0xC7,0xC7,0xC7,0xC7,0xC7});
+    my_nrf.rx_destination(DATA_PIPE_2, (uint8_t[]){0xC8,0xC7,0xC7,0xC7,0xC7});
+    my_nrf.rx_destination(DATA_PIPE_3, (uint8_t[]){0xC9,0xC7,0xC7,0xC7,0xC7});
 
 
     //set to Standby-I Mode
