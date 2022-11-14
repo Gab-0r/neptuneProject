@@ -462,9 +462,9 @@ void sendPayloadTask(void *pvParameters){
     //const EventBits_t xBitsToWaitfor = BIT_4;
 
     const TickType_t xDelay = pdMS_TO_TICKS(500UL), xDontBlock = 0;
-    const TickType_t xDelayTimeOut = pdMS_TO_TICKS(100UL);
+    const TickType_t xDelayTimeOut = pdMS_TO_TICKS(10UL);
 
-    uint8_t timeOutCounter = 0;
+    int timeOutCounter = 0;
 
     // data pipe number a packet was received on
     uint8_t pipe_numberRX = 0;
@@ -472,6 +472,8 @@ void sendPayloadTask(void *pvParameters){
     while(true){
         //xEventGroupValue = xEventGroupWaitBits(xControlEventGroup, xBitsToWaitfor, pdTRUE, pdTRUE, portMAX_DELAY);
         printf("---- < ENVIANDO PAYLOAD > ----\r\n");
+
+        timeOutCounter = 0;
 
         // send to receiver's DATA_PIPE_0 address
         my_nrf.tx_destination((uint8_t[]){0x37,0x37,0x37,0x37,0x37});
@@ -497,7 +499,7 @@ void sendPayloadTask(void *pvParameters){
             my_nrf.receiver_mode();
             printf("Preparado para recibir control \r\n");
 
-            while(1){
+            while(timeOutCounter < 200){
                 if(my_nrf.is_packet(&pipe_numberRX))
                 {
                     switch (pipe_numberRX)
@@ -530,7 +532,18 @@ void sendPayloadTask(void *pvParameters){
                         break;
                     }
                 }
+                
+                else{
+                    timeOutCounter += 1;
+                    vTaskDelay(xDelayTimeOut);
+                }
             }
+
+            if(timeOutCounter > 19){
+                printf("COM TIMEOUT\r\n");
+                timeOutCounter = 0;
+            }
+
         }
         /*
         else {
