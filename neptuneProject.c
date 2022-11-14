@@ -461,8 +461,8 @@ void sendPayloadTask(void *pvParameters){
     //Bits del grupo de eventos por lo que se va a esperar
     //const EventBits_t xBitsToWaitfor = BIT_4;
 
-    const TickType_t xDelay = pdMS_TO_TICKS(500UL), xDontBlock = 0;
-    const TickType_t xDelayTimeOut = pdMS_TO_TICKS(10UL);
+    const TickType_t xDelay = pdMS_TO_TICKS(50UL), xDontBlock = 0;
+    const TickType_t xDelayTimeOut = pdMS_TO_TICKS(1UL);
 
     int timeOutCounter = 0;
 
@@ -539,7 +539,7 @@ void sendPayloadTask(void *pvParameters){
                 }
             }
 
-            if(timeOutCounter > 19){
+            if(timeOutCounter > 199){
                 printf("COM TIMEOUT\r\n");
                 timeOutCounter = 0;
             }
