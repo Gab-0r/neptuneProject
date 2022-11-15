@@ -462,7 +462,7 @@ void sendPayloadTask(void *pvParameters){
 
     //Payload to receive
     typedef struct payload2Receive_s{
-        uint8_t velaDegree;
+        uint16_t velaDegree;
         bool right;
         bool left; 
     } payload2Receive_t;
