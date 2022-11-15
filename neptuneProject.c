@@ -564,7 +564,7 @@ void sendPayloadTask(void *pvParameters){
             my_nrf.receiver_mode();
             printf("Preparado para recibir control \r\n");
 
-            while(timeOutCounter < 200){
+            while(timeOutCounter < 100){
                 if(my_nrf.is_packet(&pipe_numberRX))
                 {
                     switch (pipe_numberRX)
@@ -578,21 +578,6 @@ void sendPayloadTask(void *pvParameters){
                                 payload2Receive.left, pipe_numberRX);
                         break;
                         
-                        case DATA_PIPE_1:
-                        break;
-                        
-                        case DATA_PIPE_2:
-                        break;
-                        
-                        case DATA_PIPE_3:
-                        break;
-                        
-                        case DATA_PIPE_4:
-                        break;
-                        
-                        case DATA_PIPE_5:
-                        break;
-                        
                         default:
                         break;
                     }
@@ -604,7 +589,7 @@ void sendPayloadTask(void *pvParameters){
                 }
             }
 
-            if(timeOutCounter > 199){
+            if(timeOutCounter > 100){
                 printf("COM TIMEOUT\r\n");
                 timeOutCounter = 0;
             }
