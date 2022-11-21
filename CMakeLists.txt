@@ -44,6 +44,7 @@ if(TARGET tinyusb_device)
         hardware_adc
         hardware_timer
         nrf24_driver
+        hardware_pwm
     )
 
     pico_add_extra_outputs(neptuneProject)

@@ -10,6 +10,7 @@
 #include "queue.h"
 #include "mpu9250.h"
 #include "nrf24_driver.h"
+#include "hardware/pwm.h"
 
 //Timers del FreeRTOS
 #include "timers.h"
@@ -135,6 +136,28 @@ uint32_t my_baudrate = 5000000;
 
 nrf_client_t my_nrf;
 
+//Variables del Servo
+const float clockDiv = 64;
+float wrap = 39062;
+const int degree = 0;
+
+//Servomotores
+const int servoVela = 7;
+const int servoTimon1 = 8;
+const int servoTimon2 = 9;
+
+//Servomotor 2
+const int servoPin2 = 1;
+const int rightPin = 12;
+const int leftPin = 15;
+float grados2 = 90;
+bool rightButton = false;
+bool leftButton = false;
+
+//Funciones para los servos
+void InitServo(int servoPin, float startDegree);
+void setDegree(int servoPin, float degree);
+
 int main()
 {
     hardwareInit();
@@ -170,6 +193,9 @@ int main()
 
     //Iniciar el scheduler
     printf("Iniciando scheduler...\r\n");
+    
+    //Control de los servos
+    setDegree(servoVela, 90);
     vTaskStartScheduler();
 
     for(;;);
@@ -481,7 +507,7 @@ void sendPayloadTask(void *pvParameters){
     //Bits del grupo de eventos por lo que se va a esperar
     //const EventBits_t xBitsToWaitfor = BIT_4;
 
-    const TickType_t xDelay = pdMS_TO_TICKS(50UL), xDontBlock = 0;
+    const TickType_t xDelay = pdMS_TO_TICKS(25UL), xDontBlock = 0;
     const TickType_t xDelayTimeOut = pdMS_TO_TICKS(1UL);
 
     int timeOutCounter = 0;
@@ -564,7 +590,7 @@ void sendPayloadTask(void *pvParameters){
             my_nrf.receiver_mode();
             printf("Preparado para recibir control \r\n");
 
-            while(timeOutCounter < 100){
+            while(timeOutCounter < 50){
                 if(my_nrf.is_packet(&pipe_numberRX))
                 {
                     switch (pipe_numberRX)
@@ -576,6 +602,21 @@ void sendPayloadTask(void *pvParameters){
                             // receiving a two byte struct payload on DATA_PIPE_2
                             printf("\nPacket received:- Payload (%d, %d, %d) on data pipe (%d)\n", payload2Receive.velaDegree, payload2Receive.right, 
                                 payload2Receive.left, pipe_numberRX);
+
+                            if(payload2Receive.right & (grados2<=175)){
+                                grados2 += 10;
+                            }
+                            if(payload2Receive.left & (grados2>=5)){
+                                grados2 -= 10;
+                            }
+                            /*
+                            if(grados2>=95){
+                                grados2 -= 5;
+                            }
+                            if(grados2<=85){
+                                grados2 += 5;
+                            }
+                            */
                         break;
                         
                         default:
@@ -594,6 +635,10 @@ void sendPayloadTask(void *pvParameters){
                 timeOutCounter = 0;
             }
 
+            //Control de los servos
+            setDegree(servoVela, payload2Receive.velaDegree);
+            setDegree(servoTimon1, grados2);
+            setDegree(servoTimon2, grados2);
         }
         /*
         else {
@@ -618,6 +663,12 @@ void hardwareInit(void){
     adc_gpio_init(windDirPin);
     adc_select_input(2);
     gpio_set_irq_enabled_with_callback(intHole, GPIO_IRQ_EDGE_RISE, true, &addHole);
+
+
+    //Inicialización de servos
+    InitServo(servoVela, 0);
+    InitServo(8, 0);
+    InitServo(9, 0);
 
     //Init IMU
     init_mpu9250(100);
@@ -664,7 +715,7 @@ void createTasks(void){
     xTaskCreate(controlActionTask, "ControlAction", 1000, NULL, 3, NULL);
 
     //Tarea de comunicacion
-    xTaskCreate(sendPayloadTask, "Send", 1000, NULL, 2, NULL);
+    xTaskCreate(sendPayloadTask, "Send", 1000, NULL, 4, NULL);
 }
 
 void init_mpu9250(int loop){
@@ -684,5 +735,34 @@ void updateAngles(int16_t acelTemp[3], int16_t gyroTemp[3], int16_t magnetoTemp[
 
 void addHole(){
     holeCount += 1;
+}
+
+//FUNCIONES DEL SERVO
+void setDegree(int servoPin, float degree)
+{
+    float millis;
+    millis = ((100/9)*degree) + 400;
+    pwm_set_gpio_level(servoPin, (millis/20000.f)*wrap);
+}
+
+void InitServo(int servoPin, float startDegree)
+{
+    gpio_set_function(servoPin, GPIO_FUNC_PWM);
+
+    uint slice_num = pwm_gpio_to_slice_num(servoPin);
+
+    pwm_config config = pwm_get_default_config();
+    
+    uint64_t clockspeed = clock_get_hz(5); //Get the current frequency of the specified clock
+
+    wrap = clockspeed/clockDiv/50;
+
+    pwm_config_set_clkdiv(&config, clockDiv);
+    pwm_config_set_wrap(&config, wrap);
+    pwm_init(slice_num, &config, true);
+
+    float startMillis;
+    startMillis = ((100/9)*startDegree) + 400;
+    setDegree(servoPin, startMillis);
 }
 
